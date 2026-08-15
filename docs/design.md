@@ -282,7 +282,7 @@ volcengine 音色列表已整理为权威参考:
 
 首版 volcengine provider 只支持 **`seed-tts-2.0` 标准 + 多语种**;声音复刻与多情感列为后续扩展(见 §10 非目标)。
 
-siliconflow 音色:系统预设 8 个 CosyVoice2-0.5B 音色(alex/benjamin/charles/david/anna/bella/claire/diana),`voice_type` 用「模型:音色名」前缀形式(如 `FunAudioLLM/CosyVoice2-0.5B:alex`)。权威见 https://api-docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech。
+siliconflow 音色:CosyVoice2-0.5B 与 MOSS-TTSD-v0.5 共用同一套 8 个系统预设音色(alex/benjamin/charles/david/anna/bella/claire/diana),`voice_type` 用「模型:音色名」前缀形式(如 `FunAudioLLM/CosyVoice2-0.5B:alex`、`fnlp/MOSS-TTSD-v0.5:alex`)。权威见 https://api-docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech。
 
 ## 9. 文档证据
 
