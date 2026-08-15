@@ -11,8 +11,9 @@ import type { ConfigTemplate, TtsChunk, TtsResult, VolcengineConfig } from './ty
 export const VOLCENGINE_API_URL = 'https://openspeech.bytedance.com/api/v3/tts/unidirectional'
 
 /**
- * 开发期 API key 的环境变量引用名。最终发布版改走 dsh 的 credentials-local
- * 凭证机制(凭据引用),此常量仅作开发停靠,不硬编码任何值。
+ * API key 的凭证引用名(credential-ref,存 `~/.dsh/.credentials.yaml`)。
+ * 配置载体只存这个引用名、不存秘密本身;运行时经 `ctx.credentials.resolve`
+ * 解析,底层 credentials-local 会把 process env / `.env` 作为回退层。
  */
 export const VOLCENGINE_API_KEY_REF = 'VOLCENGINE_TTS_API_KEY'
 

@@ -18,7 +18,6 @@ import {
   DEFAULT_VOICE_TYPE,
   streamVolcengine,
   synthesizeVolcengine,
-  VOLCENGINE_API_KEY_REF,
   VOLCENGINE_CONFIG_TEMPLATE,
 } from './volcengine.js'
 
@@ -50,27 +49,29 @@ function resolveConfig(config: Record<string, unknown>): VolcengineConfig {
 }
 
 /**
- * volcengine TTS provider。API key 从环境变量 {@link VOLCENGINE_API_KEY_REF}
- * 读取(开发期由 dsh 从 `.env` 加载);最终发布版改走 credentials-local。
+ * volcengine TTS provider。API key 由注入的 `resolveApiKey` 解析——编排层用
+ * dsh 的 credentials seam(`ctx.credentials.resolve(credentialRef(...))`)实现,
+ * provider 本身不读 `process.env`、也不 import cordis(纯逻辑可单测)。
  */
 export class VolcengineTtsProvider implements TtsProvider {
   readonly id = 'volcengine'
   readonly configTemplate = VOLCENGINE_CONFIG_TEMPLATE
 
-  private apiKey(): string {
-    const key = process.env[VOLCENGINE_API_KEY_REF]
-    if (key === undefined || key.length === 0) {
-      throw new Error(`missing API key: set ${VOLCENGINE_API_KEY_REF} in .env or the environment`)
-    }
-    return key
+  private readonly resolveApiKey: () => Promise<string>
+
+  /**
+   * @param resolveApiKey - 每次合成调用时解析一次 API key(对齐 llm 适配器的 per-operation 语义)。
+   */
+  constructor(resolveApiKey: () => Promise<string>) {
+    this.resolveApiKey = resolveApiKey
   }
 
   async synthesize(request: TtsRequest): Promise<TtsResult> {
-    return synthesizeVolcengine(resolveConfig(request.config), this.apiKey(), request.text)
+    return synthesizeVolcengine(resolveConfig(request.config), await this.resolveApiKey(), request.text)
   }
 
   async *streamSynthesize(request: TtsRequest): AsyncIterable<TtsChunk> {
-    yield * streamVolcengine(resolveConfig(request.config), this.apiKey(), request.text)
+    yield * streamVolcengine(resolveConfig(request.config), await this.resolveApiKey(), request.text)
   }
 
   listVoices(): readonly TtsVoice[] {

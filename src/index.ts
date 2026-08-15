@@ -16,9 +16,10 @@ import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type { SettingsScope } from '@deepseek-ai/dsh-settings'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-session'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { TtsService } from './service.js'
 import { VolcengineTtsProvider } from './provider-volcengine.js'
-import { DEFAULT_VOICE_TYPE } from './volcengine.js'
+import { DEFAULT_VOICE_TYPE, VOLCENGINE_API_KEY_REF } from './volcengine.js'
 import type { VoiceTtsSettings } from './types.js'
 import { concatAudio, planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
@@ -278,8 +279,23 @@ export function apply(ctx: Context): void {
   // Service Definition —— 构造即注册为 ctx.tts,随插件 fiber 销毁。
   const tts = new TtsService(ctx)
 
+  // 凭证解析:走 dsh 的 credentials seam(对齐 llm-deepseek 的 per-operation resolve),
+  // 不直接读 process.env。无 credentials seam 时回退环境变量(credentials-local
+  // 本身就把 process env / .env 作为一层,此处 fallback 仅覆盖 seam 未挂载的嵌入场景)。
+  const resolveApiKey = async (): Promise<string> => {
+    const ref = credentialRef(VOLCENGINE_API_KEY_REF)
+    const credentials = ctx.get('credentials')
+    if (credentials !== undefined) {
+      const hit = await credentials.resolve(ref)
+      if (hit !== undefined) return hit.value
+    }
+    const ambient = process.env[VOLCENGINE_API_KEY_REF]
+    if (ambient !== undefined && ambient.length > 0) return ambient
+    throw new Error(`missing API key: store ${VOLCENGINE_API_KEY_REF} through the credentials service (dsh credentials) or export it in the environment`)
+  }
+
   // Provider —— 首版仅 volcengine。
-  ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider()), 'volcengine provider')
+  ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider(resolveApiKey)), 'volcengine provider')
 
   // 当前生效设置(settings 挂载前为默认,挂载后随 watch 更新)。
   let activeSettings: VoiceTtsSettings = DEFAULT_SETTINGS

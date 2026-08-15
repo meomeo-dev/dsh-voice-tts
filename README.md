@@ -58,7 +58,7 @@ voice-tts:
 
 ## 凭据
 
-API key 存 `$DSH_HOME/.credentials.yaml`(0600),引用名 `VOLCENGINE_TTS_API_KEY`,不进 settings / 环境变量 / session log。
+API key 走 dsh 的 **credentials seam**(`ctx.credentials.resolve(credentialRef('VOLCENGINE_TTS_API_KEY'))`),值存 `$DSH_HOME/.credentials.yaml`(0600),不进 settings / session log / 不硬编码。credentials-local 会回退到 process env / `.env`,但插件代码不直接读 `process.env`。
 
 ## 文档证据
 

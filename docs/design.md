@@ -89,20 +89,18 @@ voice-tts:
 
 **非目标(首版不进 settings)**:`additions` 里的 `silence_duration`/`disable_markdown_filter`/`disable_emoji_filter`/`explicit_language`/`explicit_dialect`、`context_texts`(语音指令)、`section_id`、`tone_fidelity`、字幕、缓存——这些是进阶能力,后续 provider 扩展时逐个加进 settings,首版只做「文本→音频」。
 
-### 3.2 credentials(API key,绝不进 settings / 环境变量 / 硬编码)
+### 3.2 credentials(API key,绝不进 settings / 硬编码 / 直接读 env)
 
-API key 走 dsh 的 `credentials-local` 机制:
+API key 走 dsh 的 **credentials seam**(`ctx.credentials`),凭证引用名 `VOLCENGINE_TTS_API_KEY`:
 
-- 存于 `$DSH_HOME/.credentials.yaml`(`0600`,owner-only 目录)。
-- 运行时按 **credential-reference** 解析,不进 process env、不进 session log。
-- 满足「禁止走环境变量」的诉求——用 dsh 已有凭证机制,而非 settings 硬编码。
-
-```yaml
-# $DSH_HOME/.credentials.yaml
-VOLCENGINE_TTS_API_KEY: <value>
-```
-
-provider 配置里只存 `apiKeyRef` 的**引用名**,不存值。对齐 dsh-base 里 llm adapter 的 `apiKeyRef` 引用模式。
+- 配置载体只存**引用名**,不存值;运行时每次合成调用 `ctx.credentials.resolve(credentialRef('VOLCENGINE_TTS_API_KEY'))` 解析(对齐 llm-deepseek 的 per-operation resolve 语义)。
+- 凭证值存 `$DSH_HOME/.credentials.yaml`(`0600`,owner-only 目录),由 `dsh-credentials-local` provider 托管:
+  ```yaml
+  # $DSH_HOME/.credentials.yaml
+  VOLCENGINE_TTS_API_KEY: <value>
+  ```
+- credentials-local 的解析链:继承 process env(只读、最高)→ `.credentials.yaml`(可写)→ `<cwd>/.env` / `$DSH_HOME/.env`(回退)。所以凭证**可通过**环境变量 `.env` 覆盖,但插件代码不直接读 `process.env`——它只认 `ctx.credentials.resolve`,这样 `describe()` 能报告「从哪来、可写吗」、轮换凭证不碰配置、settings 文档不含秘密。
+- 无 credentials seam 挂载的嵌入场景,才回退读 `process.env[VOLCENGINE_TTS_API_KEY]`(与 llm-deepseek 的 `credentials === undefined` 分支一致)。
 
 > **安全提示**:API key(`X-Api-Key` 头)是敏感凭据。若已在任何对话/日志中暴露,须在 volcengine 控制台**立即轮换**。本插件实现与文档绝不硬编码 key。
 
