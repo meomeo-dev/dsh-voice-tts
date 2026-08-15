@@ -167,6 +167,20 @@ export function findPanelDist(): string | undefined {
   return undefined
 }
 
+// ---- 音色语种 ----
+
+/**
+ * 从 `voice_type` 推导音色的主要语种,供面板在 zh/en 槽位做软提示。
+ * - volcengine:`<lang>_...` 前缀是 ISO 语言代码(`zh_`/`en_`/`ja_`/…),取前缀。
+ * - siliconflow:`模型:音色` 形式,多语种模型,返回 `multi`。
+ * @param voiceType - 音色 id。
+ * @returns 主要语种:`zh` / `en` / 其他 ISO 代码 / `multi`(多语种)。
+ */
+export function primaryLangOf(voiceType: string): string {
+  if (voiceType.includes(':')) return 'multi'
+  return voiceType.split('_')[0] ?? 'other'
+}
+
 // ---- 状态预览 ----
 
 /** 状态预览条:当前 dsh-voice id + 生效音色解析。 */

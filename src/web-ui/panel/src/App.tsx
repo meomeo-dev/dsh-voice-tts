@@ -18,6 +18,9 @@ const PROVIDERS = ['volcengine', 'siliconflow-cn'] as const
 /** 音色 `group` → 下拉分组名。 */
 const GROUP_LABEL: Record<string, string> = { standard: '标准', multilingual: '多语种' }
 
+/** 主要语种 → 展示名。 */
+const LANG_LABEL: Record<string, string> = { zh: '中文', en: '英文', multi: '多语种' }
+
 /** siliconflow 模型 id → 简短标签。 */
 const MODEL_LABEL: Record<string, string> = {
   'FunAudioLLM/CosyVoice2-0.5B': 'CosyVoice2-0.5B',
@@ -62,6 +65,18 @@ function rowsToProfiles(rows: readonly ProfileRow[]): Record<string, Voices> {
 }
 
 /**
+ * 计算 zh/en 槽位的语种软提示。返回 undefined 表示不提示:
+ * 未推导、多语种音色、或语种匹配时都不提示。
+ */
+function mismatchWarning(expectedLang: 'zh' | 'en', primaryLang: string | undefined): string | undefined {
+  if (primaryLang === undefined || primaryLang === 'multi' || primaryLang === expectedLang) return undefined
+  const langName = LANG_LABEL[primaryLang] ?? primaryLang
+  return expectedLang === 'zh'
+    ? `⚠ 该音色主要语种是「${langName}」,zh 槽位通常应选中文音色`
+    : `⚠ 该音色主要语种是「${langName}」,en 槽位通常应选英文音色`
+}
+
+/**
  * 音色选择器:可搜索下拉,每行展示 name / scene / ability / lang / group / voice_type,
  * 也允许直接输入音色 id。`voices` 应是**按当前 model/resource_id 过滤后**的列表。
  */
@@ -71,6 +86,7 @@ function VoicePicker(props: {
   label: string
   desc?: string
   placeholder?: string
+  expectedLang?: 'zh' | 'en'
   onChange: (next: string) => void
 }): JSX.Element {
   const [open, setOpen] = useState(false)
@@ -105,6 +121,10 @@ function VoicePicker(props: {
   const selected = props.value.length > 0 ? props.voices.find(v => v.voice_type === props.value) : undefined
   // 关闭时显示已选音色的友好名;打开时显示搜索词。自定义 id 原样显示。
   const display = open ? query : (selected !== undefined ? selected.name : props.value)
+  // 语种软提示:选中音色与槽位期望语种不匹配时给出黄色警告,不阻止保存。
+  const warn = props.expectedLang !== undefined && selected !== undefined
+    ? mismatchWarning(props.expectedLang, selected.primaryLang)
+    : undefined
 
   const commit = (voiceType: string): void => {
     props.onChange(voiceType)
@@ -145,6 +165,7 @@ function VoicePicker(props: {
         onChange={e => { setQuery(e.target.value); setOpen(true); setActive(0) }}
         onKeyDown={onKeyDown}
       />
+      {warn !== undefined && <div className="vp-warn">{warn}</div>}
       {open && (
         <div className="vp-list" role="listbox">
           {options.length === 0 && <div className="vp-empty">无匹配音色(可直接输入 voice id)</div>}
@@ -275,8 +296,8 @@ function BilingualFields(props: {
         </label>
       </div>
       <div className="field-row">
-        <VoicePicker voices={props.voices} label="voices.zh" desc="中文音色" value={cfg.voices.zh ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, zh: next } })} />
-        <VoicePicker voices={props.voices} label="voices.en" desc="英文音色" value={cfg.voices.en ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, en: next } })} />
+        <VoicePicker voices={props.voices} label="voices.zh" desc="中文音色" expectedLang="zh" value={cfg.voices.zh ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, zh: next } })} />
+        <VoicePicker voices={props.voices} label="voices.en" desc="英文音色" expectedLang="en" value={cfg.voices.en ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, en: next } })} />
         <VoicePicker voices={props.voices} label="voices.mixed" desc="混合音色" value={cfg.voices.mixed ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, mixed: next } })} />
       </div>
     </>
@@ -298,8 +319,8 @@ function ProfilesEditor(props: {
         <div className="profile-row" key={index}>
           <input type="text" className="profile-id" placeholder="voice id (如 steve-jobs)" value={row.id}
             onChange={e => update(rows.map((r, i) => i === index ? { ...r, id: e.target.value } : r))} />
-          <VoicePicker voices={props.voices} label="zh" value={row.zh} onChange={next => update(rows.map((r, i) => i === index ? { ...r, zh: next } : r))} />
-          <VoicePicker voices={props.voices} label="en" value={row.en} onChange={next => update(rows.map((r, i) => i === index ? { ...r, en: next } : r))} />
+          <VoicePicker voices={props.voices} label="zh" expectedLang="zh" value={row.zh} onChange={next => update(rows.map((r, i) => i === index ? { ...r, zh: next } : r))} />
+          <VoicePicker voices={props.voices} label="en" expectedLang="en" value={row.en} onChange={next => update(rows.map((r, i) => i === index ? { ...r, en: next } : r))} />
           <VoicePicker voices={props.voices} label="mixed" value={row.mixed} onChange={next => update(rows.map((r, i) => i === index ? { ...r, mixed: next } : r))} />
           <button type="button" className="refresh danger" onClick={() => update(rows.filter((_, i) => i !== index))}>删除</button>
         </div>

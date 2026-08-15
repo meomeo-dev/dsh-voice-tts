@@ -176,6 +176,15 @@ body {
   z-index: 20;
 }
 
+.vp-warn {
+  font-size: 12px;
+  color: var(--warn-dark);
+  background: rgb(255, 251, 235);
+  border: 1px solid rgb(253, 230, 138);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
 .vp-empty {
   padding: 12px 14px;
   color: var(--label-caption);

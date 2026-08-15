@@ -49,6 +49,7 @@ import {
   PANEL_CHANNEL,
   PANEL_PAGE,
   panelUrl,
+  primaryLangOf,
   queryToken,
   readPanelAsset,
   renderPanelShell,
@@ -496,7 +497,7 @@ function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: () => stri
         return describeStatus(deliveryView(activeScope?.get() ?? DEFAULT_SETTINGS), resolveVoiceId())
       },
       listVoices(providerId) {
-        return tts.listVoices(providerId)
+        return tts.listVoices(providerId).map(voice => ({ ...voice, primaryLang: primaryLangOf(voice.voice_type) }))
       },
       listModels(providerId) {
         if (providerId === 'volcengine') return VOLCENGINE_RESOURCE_IDS

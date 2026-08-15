@@ -89,6 +89,8 @@ export interface Voice {
   readonly ability: string
   /** 归属表:`standard` / `multilingual`。 */
   readonly group?: string
+  /** 主要语种:`zh` / `en` / 其他 ISO 代码 / `multi`(多语种),供 zh/en 槽位软提示。 */
+  readonly primaryLang?: string
 }
 
 /** API key 只读状态(镜像 host 侧 PanelKeyStatus)。 */

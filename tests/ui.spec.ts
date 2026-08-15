@@ -8,6 +8,7 @@ import {
   PANEL_CHANNEL,
   PANEL_PAGE,
   panelUrl,
+  primaryLangOf,
   queryToken,
   renderPanelShell,
   resolvePanelAsset,
@@ -91,6 +92,23 @@ describe('token', () => {
 describe('panelUrl', () => {
   it('builds a loopback URL with the page and token', () => {
     expect(panelUrl(3080, 'tok')).toBe(`http://127.0.0.1:3080${PANEL_PAGE}?ac_token=tok`)
+  })
+})
+
+describe('primaryLangOf', () => {
+  it('derives zh / en from the volcengine voice_type prefix', () => {
+    expect(primaryLangOf('zh_female_vv_uranus_bigtts')).toBe('zh')
+    expect(primaryLangOf('en_male_david_uranus_bigtts')).toBe('en')
+  })
+
+  it('keeps other ISO prefixes as-is', () => {
+    expect(primaryLangOf('ja_male_xxx_uranus_bigtts')).toBe('ja')
+    expect(primaryLangOf('ko_female_yyy_uranus_bigtts')).toBe('ko')
+  })
+
+  it('treats siliconflow model:voice ids as multilingual', () => {
+    expect(primaryLangOf('FunAudioLLM/CosyVoice2-0.5B:alex')).toBe('multi')
+    expect(primaryLangOf('fnlp/MOSS-TTSD-v0.5:diana')).toBe('multi')
   })
 })
 
