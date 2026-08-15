@@ -84,8 +84,10 @@ export interface Status {
 export interface Voice {
   readonly voice_type: string
   readonly name: string
+  readonly scene: string
   readonly lang: string
-  /** 归属表:`standard` / `multilingual`(用于下拉分组)。 */
+  readonly ability: string
+  /** 归属表:`standard` / `multilingual`。 */
   readonly group?: string
 }
 

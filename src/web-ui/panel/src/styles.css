@@ -148,10 +148,97 @@ body {
   gap: 0;
 }
 
-.voice-field {
+/* 音色选择器(可搜索下拉)。 */
+.voice-picker {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  position: relative;
+}
+
+.voice-picker input {
+  width: 100%;
+}
+
+.vp-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-base);
+  border: 1px solid var(--border-l2);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 20;
+}
+
+.vp-empty {
+  padding: 12px 14px;
+  color: var(--label-caption);
+  font-size: 12px;
+}
+
+.vp-option {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-l1);
+}
+
+.vp-option:last-child {
+  border-bottom: none;
+}
+
+.vp-option:hover,
+.vp-option.active {
+  background: var(--hover);
+}
+
+.vp-option[aria-selected='true'] .vp-name {
+  color: var(--business-primary);
+}
+
+.vp-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vp-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--label-primary);
+}
+
+.vp-group {
+  font-size: 11px;
+  color: var(--label-caption);
+  border: 1px solid var(--border-l2);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 16px;
+}
+
+.vp-check {
+  margin-left: auto;
+  color: var(--business-primary);
+  font-weight: 600;
+}
+
+.vp-row-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--label-secondary);
+}
+
+.vp-row-lang {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--label-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* voice_profiles 行编辑器 */

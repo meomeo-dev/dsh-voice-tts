@@ -212,6 +212,8 @@ export interface PanelDeps {
   status(): PanelStatus
   /** 某 provider 的音色表。 */
   listVoices(providerId: string): readonly TtsVoice[]
+  /** 某 provider 的模型/资源 id 列表(面板下拉联动音色用)。 */
+  listModels(providerId: string): readonly string[]
   /** 某凭证引用(KEY NAME)的只读状态。 */
   keyStatus(ref: string): Promise<PanelKeyStatus>
   /** 写某凭证引用(KEY NAME)的值(走 credentials seam)。 */
@@ -339,7 +341,7 @@ export async function handlePanelRpc(
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')
         const parsed = parsePayload(PROVIDER_PAYLOAD, payload)
         if (!parsed.ok) return panelError('bad-request', parsed.message)
-        return { ok: true, value: { voices: deps.listVoices(parsed.value.provider) } }
+        return { ok: true, value: { voices: deps.listVoices(parsed.value.provider), models: deps.listModels(parsed.value.provider) } }
       }
       case 'key-status': {
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')

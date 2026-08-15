@@ -20,8 +20,8 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { TtsService } from './service.js'
 import { VolcengineTtsProvider } from './provider-volcengine.js'
 import { SiliconflowTtsProvider } from './provider-siliconflow.js'
-import { DEFAULT_VOICE_TYPE, DEFAULT_VOLCENGINE_API_KEY_REF } from './volcengine.js'
-import { DEFAULT_SILICONFLOW_API_KEY_REF, DEFAULT_SILICONFLOW_MODEL, DEFAULT_SILICONFLOW_VOICE } from './siliconflow.js'
+import { DEFAULT_VOICE_TYPE, DEFAULT_VOLCENGINE_API_KEY_REF, VOLCENGINE_RESOURCE_IDS } from './volcengine.js'
+import { DEFAULT_SILICONFLOW_API_KEY_REF, DEFAULT_SILICONFLOW_MODEL, DEFAULT_SILICONFLOW_VOICE, SILICONFLOW_MODELS } from './siliconflow.js'
 import type { BilingualVoiceConfig, VoiceTtsSettings } from './types.js'
 import { concatAudio, planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
@@ -489,6 +489,11 @@ function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: () => stri
       },
       listVoices(providerId) {
         return tts.listVoices(providerId)
+      },
+      listModels(providerId) {
+        if (providerId === 'volcengine') return VOLCENGINE_RESOURCE_IDS
+        if (providerId === 'siliconflow-cn') return SILICONFLOW_MODELS
+        return []
       },
       async keyStatus(ref) {
         const credentials = ctx.get('credentials')

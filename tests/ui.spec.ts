@@ -158,6 +158,7 @@ describe('handlePanelRpc', () => {
       setConfig: async () => settings,
       status: () => describeStatus(settings.providers.volcengine, undefined),
       listVoices: () => [voice],
+      listModels: () => ['seed-tts-2.0', 'seed-icl-2.0'],
       keyStatus: async () => ({ configured: true, source: 'file', writable: true }),
       setKey: async () => {},
       unsetKey: async () => {},
@@ -193,11 +194,13 @@ describe('handlePanelRpc', () => {
     expect(result.ok).toBe(false)
   })
 
-  it('voices-list returns the voice catalog for a provider', async () => {
+  it('voices-list returns the voice catalog + models for a provider', async () => {
     const listVoices = vi.fn(() => [voice])
-    const result = await handlePanelRpc('voices-list', { acToken: TOKEN, provider: 'volcengine' }, TOKEN, deps({ listVoices }))
+    const listModels = vi.fn(() => ['seed-tts-2.0', 'seed-icl-2.0'])
+    const result = await handlePanelRpc('voices-list', { acToken: TOKEN, provider: 'volcengine' }, TOKEN, deps({ listVoices, listModels }))
     expect(listVoices).toHaveBeenCalledWith('volcengine')
-    expect(result).toEqual({ ok: true, value: { voices: [voice] } })
+    expect(listModels).toHaveBeenCalledWith('volcengine')
+    expect(result).toEqual({ ok: true, value: { voices: [voice], models: ['seed-tts-2.0', 'seed-icl-2.0'] } })
   })
 
   it('key-status returns configured/source/writable without a value', async () => {

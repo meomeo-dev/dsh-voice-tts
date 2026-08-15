@@ -17,6 +17,12 @@ export const DEFAULT_SILICONFLOW_API_KEY_REF = 'SILICONFLOW_API_KEY'
 /** 默认 TTS 模型:CosyVoice2-0.5B(跨语种 + 情感控制)。 */
 export const DEFAULT_SILICONFLOW_MODEL = 'FunAudioLLM/CosyVoice2-0.5B'
 
+/**
+ * 可选的 TTS 模型 id,供面板下拉联动音色。
+ * CosyVoice2-0.5B 有 8 个系统预设音色;MOSS-TTSD-v0.5 无预设音色(双人声复刻)。
+ */
+export const SILICONFLOW_MODELS: readonly string[] = ['FunAudioLLM/CosyVoice2-0.5B', 'fnlp/MOSS-TTSD-v0.5']
+
 /** 默认音色:alex(沉稳男声)。 */
 export const DEFAULT_SILICONFLOW_VOICE = 'FunAudioLLM/CosyVoice2-0.5B:alex'
 

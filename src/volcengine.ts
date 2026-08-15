@@ -20,6 +20,9 @@ export const DEFAULT_VOLCENGINE_API_KEY_REF = 'VOLCENGINE_TTS_API_KEY'
 /** 默认音色:2.0 标准首个通用女声 Vivi 2.0。 */
 export const DEFAULT_VOICE_TYPE = 'zh_female_vv_uranus_bigtts'
 
+/** 可选的模型版本(请求头 `X-Api-Resource-Id`),供面板下拉联动音色。 */
+export const VOLCENGINE_RESOURCE_IDS: readonly string[] = ['seed-tts-2.0', 'seed-icl-2.0']
+
 /** volcengine provider 的完整配置模板(对齐 design.md §4.1)。 */
 export const VOLCENGINE_CONFIG_TEMPLATE: ConfigTemplate = {
   provider: 'volcengine',
