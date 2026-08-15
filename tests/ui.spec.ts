@@ -14,29 +14,46 @@ import {
   safeTokenEqual,
   type PanelDeps,
 } from '../src/ui.js'
-import type { TtsVoice, VoiceTtsSettings } from '../src/types.js'
+import type { TtsVoice, VoiceTtsSettings, VolcengineConfig } from '../src/types.js'
 
 const TOKEN = 'test-token-1234'
 
-function makeSettings(overrides: Partial<VoiceTtsSettings['providers']['volcengine']> = {}): VoiceTtsSettings {
+function makeVolcengineConfig(overrides: Partial<VolcengineConfig> = {}): VolcengineConfig {
+  return {
+    voice_type: 'zh_female_vv_uranus_bigtts',
+    resource_id: 'seed-tts-2.0',
+    model: '',
+    format: 'mp3',
+    play_format: 'wav',
+    sample_rate: 24000,
+    speech_rate: 0,
+    loudness_rate: 0,
+    pitch: 0,
+    bilingual: 'both',
+    voices: {},
+    voice_profiles: {},
+    ...overrides,
+  }
+}
+
+function makeSettings(overrides: Partial<VolcengineConfig> = {}): VoiceTtsSettings {
   return {
     delivery: 'host_play',
     provider: 'volcengine',
     providers: {
-      volcengine: {
-        voice_type: 'zh_female_vv_uranus_bigtts',
-        resource_id: 'seed-tts-2.0',
-        model: '',
+      volcengine: { ...makeVolcengineConfig(overrides), apiKeyRef: 'VOLCENGINE_TTS_API_KEY' },
+      'siliconflow-cn': {
+        apiKeyRef: 'SILICONFLOW_API_KEY',
+        voice_type: 'FunAudioLLM/CosyVoice2-0.5B:alex',
+        model: 'FunAudioLLM/CosyVoice2-0.5B',
         format: 'mp3',
         play_format: 'wav',
-        sample_rate: 24000,
-        speech_rate: 0,
-        loudness_rate: 0,
-        pitch: 0,
+        sample_rate: 32000,
+        speed: 1,
+        gain: 0,
         bilingual: 'both',
         voices: {},
         voice_profiles: {},
-        ...overrides,
       },
     },
   }
@@ -111,10 +128,10 @@ describe('renderPanelShell', () => {
 
 describe('describeStatus', () => {
   it('resolves per-language voices through a matched profile', () => {
-    const settings = makeSettings({
+    const cfg = makeVolcengineConfig({
       voice_profiles: { 'steve-jobs': { zh: 'zh_male', en: 'en_male', mixed: 'zh_male' } },
     })
-    expect(describeStatus(settings, 'steve-jobs')).toEqual({
+    expect(describeStatus(cfg, 'steve-jobs')).toEqual({
       voiceId: 'steve-jobs',
       matchedProfile: true,
       voices: { zh: 'zh_male', en: 'en_male', mixed: 'zh_male' },
@@ -122,13 +139,13 @@ describe('describeStatus', () => {
   })
 
   it('falls back to voice_type when no profile matches', () => {
-    const settings = makeSettings()
-    expect(describeStatus(settings, 'unknown-id')).toEqual({
+    const cfg = makeVolcengineConfig()
+    expect(describeStatus(cfg, 'unknown-id')).toEqual({
       voiceId: 'unknown-id',
       matchedProfile: false,
       voices: { zh: 'zh_female_vv_uranus_bigtts', en: 'zh_female_vv_uranus_bigtts', mixed: 'zh_female_vv_uranus_bigtts' },
     })
-    expect(describeStatus(settings, undefined).voiceId).toBeNull()
+    expect(describeStatus(cfg, undefined).voiceId).toBeNull()
   })
 })
 
@@ -139,7 +156,7 @@ describe('handlePanelRpc', () => {
     return {
       getConfig: () => settings,
       setConfig: async () => settings,
-      status: () => describeStatus(settings, undefined),
+      status: () => describeStatus(settings.providers.volcengine, undefined),
       listVoices: () => [voice],
       keyStatus: async () => ({ configured: true, source: 'file', writable: true }),
       setKey: async () => {},
@@ -176,20 +193,29 @@ describe('handlePanelRpc', () => {
     expect(result.ok).toBe(false)
   })
 
-  it('voices-list returns the voice catalog', async () => {
-    const result = await handlePanelRpc('voices-list', { acToken: TOKEN }, TOKEN, deps())
+  it('voices-list returns the voice catalog for a provider', async () => {
+    const listVoices = vi.fn(() => [voice])
+    const result = await handlePanelRpc('voices-list', { acToken: TOKEN, provider: 'volcengine' }, TOKEN, deps({ listVoices }))
+    expect(listVoices).toHaveBeenCalledWith('volcengine')
     expect(result).toEqual({ ok: true, value: { voices: [voice] } })
   })
 
   it('key-status returns configured/source/writable without a value', async () => {
-    const result = await handlePanelRpc('key-status', { acToken: TOKEN }, TOKEN, deps())
+    const result = await handlePanelRpc('key-status', { acToken: TOKEN, ref: 'SILICONFLOW_API_KEY' }, TOKEN, deps())
     expect(result).toEqual({ ok: true, value: { key: { configured: true, source: 'file', writable: true } } })
   })
 
   it('key-set delegates to deps.setKey', async () => {
     const setKey = vi.fn(async () => {})
-    const result = await handlePanelRpc('key-set', { acToken: TOKEN, value: 'sk-x' }, TOKEN, deps({ setKey }))
-    expect(setKey).toHaveBeenCalledWith('sk-x')
+    const result = await handlePanelRpc('key-set', { acToken: TOKEN, ref: 'SILICONFLOW_API_KEY', value: 'sk-x' }, TOKEN, deps({ setKey }))
+    expect(setKey).toHaveBeenCalledWith('SILICONFLOW_API_KEY', 'sk-x')
+    expect(result).toEqual({ ok: true, value: {} })
+  })
+
+  it('key-unset delegates to deps.unsetKey', async () => {
+    const unsetKey = vi.fn(async () => {})
+    const result = await handlePanelRpc('key-unset', { acToken: TOKEN, ref: 'SILICONFLOW_API_KEY' }, TOKEN, deps({ unsetKey }))
+    expect(unsetKey).toHaveBeenCalledWith('SILICONFLOW_API_KEY')
     expect(result).toEqual({ ok: true, value: {} })
   })
 })

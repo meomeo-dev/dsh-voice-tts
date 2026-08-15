@@ -8,7 +8,7 @@
  * @module dsh-voice-tts/bilingual
  */
 
-import type { BilingualMode, SentenceLang, VoiceTtsVoices, VolcengineConfig } from './types.js'
+import type { BilingualMode, BilingualVoiceConfig, SentenceLang, VoiceTtsVoices } from './types.js'
 
 /** 一句已判定语言的文本。 */
 export interface BilingualSentence {
@@ -147,7 +147,7 @@ function voiceForVoices(lang: SentenceLang, voices: VoiceTtsVoices, fallback: st
  * @param lang - 语言类别。
  * @param config - volcengine 配置。
  */
-export function voiceFor(lang: SentenceLang, config: VolcengineConfig): string {
+export function voiceFor(lang: SentenceLang, config: BilingualVoiceConfig): string {
   return voiceForVoices(lang, config.voices, config.voice_type)
 }
 
@@ -159,7 +159,7 @@ export function voiceFor(lang: SentenceLang, config: VolcengineConfig): string {
  * @param config - volcengine 配置。
  * @param voiceId - 当前 dsh-voice 的 voice id;无则走缺省 voices。
  */
-export function resolvedVoice(lang: SentenceLang, config: VolcengineConfig, voiceId?: string): string {
+export function resolvedVoice(lang: SentenceLang, config: BilingualVoiceConfig, voiceId?: string): string {
   return voiceForVoices(lang, effectiveVoices(config, voiceId), config.voice_type)
 }
 
@@ -169,7 +169,7 @@ export function resolvedVoice(lang: SentenceLang, config: VolcengineConfig, voic
  * @param voiceId - 当前 dsh-voice 的 voice id(如 `steve-jobs`);无则用缺省。
  * @returns 生效的音色覆盖。
  */
-export function effectiveVoices(config: VolcengineConfig, voiceId: string | undefined): VoiceTtsVoices {
+export function effectiveVoices(config: BilingualVoiceConfig, voiceId: string | undefined): VoiceTtsVoices {
   if (voiceId !== undefined) {
     const profile = config.voice_profiles[voiceId]
     if (profile !== undefined) return profile
@@ -180,7 +180,7 @@ export function effectiveVoices(config: VolcengineConfig, voiceId: string | unde
 /** 规划双语播报:过滤后按语言分配音色,相邻同音色句子合并为一个分片。 */
 export function planBilingualSpeech(
   text: string,
-  config: VolcengineConfig,
+  config: BilingualVoiceConfig,
   voiceId?: string,
 ): BilingualPlan {
   const voices = effectiveVoices(config, voiceId)

@@ -31,9 +31,17 @@ export interface Voices {
   readonly mixed?: string
 }
 
-/** volcengine provider 配置(镜像 host 侧 VolcengineConfig)。 */
-export interface VolcengineConfig {
+/** provider 无关的双语 + 音色映射字段。 */
+export interface BilingualFields {
   voice_type: string
+  bilingual: 'both' | 'english_only' | 'chinese_only'
+  voices: Voices
+  voice_profiles: Record<string, Voices>
+}
+
+/** volcengine provider 配置(镜像 host 侧 VolcengineProviderSettings)。 */
+export interface VolcengineConfig extends BilingualFields {
+  apiKeyRef: string
   resource_id: 'seed-tts-2.0' | 'seed-icl-2.0'
   model: string
   format: 'mp3' | 'pcm' | 'ogg_opus' | 'wav'
@@ -42,16 +50,27 @@ export interface VolcengineConfig {
   speech_rate: number
   loudness_rate: number
   pitch: number
-  bilingual: 'both' | 'english_only' | 'chinese_only'
-  voices: Voices
-  voice_profiles: Record<string, Voices>
+}
+
+/** siliconflow provider 配置(镜像 host 侧 SiliconflowProviderSettings)。 */
+export interface SiliconflowConfig extends BilingualFields {
+  apiKeyRef: string
+  model: string
+  format: 'mp3' | 'opus' | 'wav' | 'pcm'
+  play_format: 'mp3' | 'opus' | 'wav' | 'pcm'
+  sample_rate: number
+  speed: number
+  gain: number
 }
 
 /** voice-tts 设置(镜像 host 侧 VoiceTtsSettings)。 */
 export interface Settings {
   delivery: 'off' | 'file' | 'host_play' | 'stream'
   provider: string
-  providers: { volcengine: VolcengineConfig }
+  providers: {
+    volcengine: VolcengineConfig
+    'siliconflow-cn': SiliconflowConfig
+  }
 }
 
 /** 状态预览(镜像 host 侧 PanelStatus)。 */

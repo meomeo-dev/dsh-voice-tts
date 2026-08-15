@@ -61,17 +61,24 @@ describe('parseTtsCommand', () => {
 })
 
 describe('parseKeyCommand', () => {
-  it('parses set with a non-empty value', () => {
+  it('parses set with a non-empty value (no provider)', () => {
     expect(parseKeyCommand('set sk-abc123')).toEqual({ kind: 'set', value: 'sk-abc123' })
   })
 
-  it('parses unset', () => {
+  it('parses set with an explicit provider', () => {
+    expect(parseKeyCommand('set volcengine sk-abc123', ['volcengine', 'siliconflow-cn']))
+      .toEqual({ kind: 'set', provider: 'volcengine', value: 'sk-abc123' })
+  })
+
+  it('parses unset with optional provider', () => {
     expect(parseKeyCommand('unset')).toEqual({ kind: 'unset' })
+    expect(parseKeyCommand('unset volcengine')).toEqual({ kind: 'unset', provider: 'volcengine' })
   })
 
   it('treats empty and status as status', () => {
     expect(parseKeyCommand('')).toEqual({ kind: 'status' })
     expect(parseKeyCommand('status')).toEqual({ kind: 'status' })
+    expect(parseKeyCommand('status volcengine')).toEqual({ kind: 'status', provider: 'volcengine' })
   })
 
   it('falls back to status for malformed input', () => {
@@ -108,6 +115,7 @@ describe('renderStatus', () => {
     provider: 'volcengine',
     providers: {
       volcengine: {
+        apiKeyRef: 'VOLCENGINE_TTS_API_KEY',
         voice_type: 'zh_female_vv_uranus_bigtts',
         resource_id: 'seed-tts-2.0',
         model: '',
@@ -121,26 +129,47 @@ describe('renderStatus', () => {
         voices: {},
         voice_profiles: {},
       },
+      'siliconflow-cn': {
+        apiKeyRef: 'SILICONFLOW_API_KEY',
+        voice_type: 'FunAudioLLM/CosyVoice2-0.5B:alex',
+        model: 'FunAudioLLM/CosyVoice2-0.5B',
+        format: 'mp3',
+        play_format: 'wav',
+        sample_rate: 32000,
+        speed: 1,
+        gain: 0,
+        bilingual: 'both',
+        voices: {},
+        voice_profiles: {},
+      },
     },
   }
 
-  it('reports provider, delivery, and config', () => {
-    const text = renderStatus(settings, ['volcengine'])
+  it('reports provider, delivery, and per-provider key refs', () => {
+    const text = renderStatus(settings, ['volcengine', 'siliconflow-cn'])
     expect(text).toContain('provider:  volcengine')
     expect(text).toContain('delivery:  off')
-    expect(text).toContain('voice_type:   zh_female_vv_uranus_bigtts')
-    expect(text).toContain('play_format: wav')
+    expect(text).toContain('apiKeyRef:  VOLCENGINE_TTS_API_KEY')
+    expect(text).toContain('apiKeyRef:  SILICONFLOW_API_KEY')
+    expect(text).toContain('voice_type: zh_female_vv_uranus_bigtts')
+    expect(text).toContain('bilingual:  both')
   })
 })
 
 describe('renderConfigTemplate', () => {
-  it('includes the full field set with defaults', () => {
-    const template = renderConfigTemplate()
+  it('renders the volcengine template with defaults', () => {
+    const template = renderConfigTemplate('volcengine')
     const parsed = JSON.parse(template) as { provider: string; config: Record<string, unknown>; credentials: { apiKeyRef: string } }
     expect(parsed.provider).toBe('volcengine')
     expect(Object.keys(parsed.config)).toEqual([
       'voice_type', 'resource_id', 'model', 'format', 'play_format', 'sample_rate', 'speech_rate', 'loudness_rate', 'pitch', 'bilingual', 'voices', 'voice_profiles',
     ])
     expect(parsed.credentials.apiKeyRef).toBe('VOLCENGINE_TTS_API_KEY')
+  })
+
+  it('renders the siliconflow template', () => {
+    const parsed = JSON.parse(renderConfigTemplate('siliconflow-cn')) as { provider: string; credentials: { apiKeyRef: string } }
+    expect(parsed.provider).toBe('siliconflow-cn')
+    expect(parsed.credentials.apiKeyRef).toBe('SILICONFLOW_API_KEY')
   })
 })

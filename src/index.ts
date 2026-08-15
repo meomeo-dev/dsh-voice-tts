@@ -19,8 +19,10 @@ import type {} from '@deepseek-ai/dsh-session'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { TtsService } from './service.js'
 import { VolcengineTtsProvider } from './provider-volcengine.js'
-import { DEFAULT_VOICE_TYPE, VOLCENGINE_API_KEY_REF } from './volcengine.js'
-import type { VoiceTtsSettings } from './types.js'
+import { SiliconflowTtsProvider } from './provider-siliconflow.js'
+import { DEFAULT_VOICE_TYPE, DEFAULT_VOLCENGINE_API_KEY_REF } from './volcengine.js'
+import { DEFAULT_SILICONFLOW_API_KEY_REF, DEFAULT_SILICONFLOW_MODEL, DEFAULT_SILICONFLOW_VOICE } from './siliconflow.js'
+import type { BilingualVoiceConfig, VoiceTtsSettings } from './types.js'
 import { concatAudio, planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
 import type { TurnEventLike } from './turn-final.js'
@@ -60,12 +62,29 @@ export const inject = ['commands']
 /** 用户可写设置命名空间。 */
 const NAMESPACE = settingsNamespace('voice-tts')
 
-/** 该命名空间的 schema,缺省回退到 volcengine 默认配置。 */
+/** 各语言类别音色覆盖的 schema(provider 通用)。 */
+function voicesSchema() {
+  return z.object({
+    zh: z.string().default(''),
+    en: z.string().default(''),
+    mixed: z.string().default(''),
+  })
+}
+
+/** per-voice 音色映射的 schema(provider 通用)。 */
+function voiceProfilesSchema() {
+  return z.dict(voicesSchema()).default({})
+}
+
+const BILINGUAL_SCHEMA = z.union(['both', 'english_only', 'chinese_only'] as const).default('both')
+
+/** 该命名空间的 schema:多 provider,每个 provider 有自己的 apiKeyRef + 合成参数。 */
 const SCHEMA: z<VoiceTtsSettings> = z.object({
   delivery: z.union(['off', 'file', 'host_play', 'stream'] as const).default('off'),
   provider: z.string().default('volcengine'),
   providers: z.object({
     volcengine: z.object({
+      apiKeyRef: z.string().default(DEFAULT_VOLCENGINE_API_KEY_REF),
       voice_type: z.string().default(DEFAULT_VOICE_TYPE),
       resource_id: z.union(['seed-tts-2.0', 'seed-icl-2.0'] as const).default('seed-tts-2.0'),
       model: z.string().default(''),
@@ -75,17 +94,22 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       speech_rate: z.number().step(1).min(-50).max(100).default(0),
       loudness_rate: z.number().step(1).min(-50).max(100).default(0),
       pitch: z.number().step(1).min(-12).max(12).default(0),
-      bilingual: z.union(['both', 'english_only', 'chinese_only'] as const).default('both'),
-      voices: z.object({
-        zh: z.string().default(''),
-        en: z.string().default(''),
-        mixed: z.string().default(''),
-      }),
-      voice_profiles: z.dict(z.object({
-        zh: z.string().default(''),
-        en: z.string().default(''),
-        mixed: z.string().default(''),
-      })).default({}),
+      bilingual: BILINGUAL_SCHEMA,
+      voices: voicesSchema(),
+      voice_profiles: voiceProfilesSchema(),
+    }),
+    'siliconflow-cn': z.object({
+      apiKeyRef: z.string().default(DEFAULT_SILICONFLOW_API_KEY_REF),
+      voice_type: z.string().default(DEFAULT_SILICONFLOW_VOICE),
+      model: z.string().default(DEFAULT_SILICONFLOW_MODEL),
+      format: z.union(['mp3', 'opus', 'wav', 'pcm'] as const).default('mp3'),
+      play_format: z.union(['mp3', 'opus', 'wav', 'pcm'] as const).default('wav'),
+      sample_rate: z.number().step(1).min(8000).max(48000).default(32000),
+      speed: z.number().step(0.01).min(0.25).max(4).default(1),
+      gain: z.number().step(0.1).min(-10).max(10).default(0),
+      bilingual: BILINGUAL_SCHEMA,
+      voices: voicesSchema(),
+      voice_profiles: voiceProfilesSchema(),
     }),
   }),
 })
@@ -96,6 +120,7 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
   provider: 'volcengine',
   providers: {
     volcengine: {
+      apiKeyRef: DEFAULT_VOLCENGINE_API_KEY_REF,
       voice_type: DEFAULT_VOICE_TYPE,
       resource_id: 'seed-tts-2.0',
       model: '',
@@ -105,6 +130,19 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       speech_rate: 0,
       loudness_rate: 0,
       pitch: 0,
+      bilingual: 'both',
+      voices: {},
+      voice_profiles: {},
+    },
+    'siliconflow-cn': {
+      apiKeyRef: DEFAULT_SILICONFLOW_API_KEY_REF,
+      voice_type: DEFAULT_SILICONFLOW_VOICE,
+      model: DEFAULT_SILICONFLOW_MODEL,
+      format: 'mp3',
+      play_format: 'wav',
+      sample_rate: 32000,
+      speed: 1,
+      gain: 0,
       bilingual: 'both',
       voices: {},
       voice_profiles: {},
@@ -139,11 +177,53 @@ function parseJsonOrThrow(json: string): Record<string, unknown> {
 }
 
 /**
+ * 当前 provider 的交付视角:双语规划只依赖 provider 无关的共享字段,
+ * 落盘/播放格式按 provider 各自取。未知 provider 抛错(settings 里 `provider`
+ * 是自由字符串,用户可能误填)。
+ */
+interface DeliveryView extends BilingualVoiceConfig {
+  readonly format: string
+  readonly play_format: string
+}
+
+/** 解析当前 provider 的共享交付视角。 */
+function deliveryView(settings: VoiceTtsSettings): DeliveryView {
+  const provider = settings.provider
+  if (provider === 'volcengine') {
+    const v = settings.providers.volcengine
+    return { bilingual: v.bilingual, voice_type: v.voice_type, voices: v.voices, voice_profiles: v.voice_profiles, format: v.format, play_format: v.play_format }
+  }
+  if (provider === 'siliconflow-cn') {
+    const s = settings.providers['siliconflow-cn']
+    return { bilingual: s.bilingual, voice_type: s.voice_type, voices: s.voices, voice_profiles: s.voice_profiles, format: s.format, play_format: s.play_format }
+  }
+  throw new Error(`unknown TTS provider "${provider}"`)
+}
+
+/**
+ * 组装一次合成请求的 provider 配置:当前 provider 的完整设置 + 覆盖后的音色与格式。
+ * @param settings - 已解析设置。
+ * @param voice - 本分片的音色 id。
+ * @param format - 合成格式。
+ * @returns 传给 `tts.synthesize` 的 `config`。
+ */
+function synthConfig(settings: VoiceTtsSettings, voice: string, format: string): Record<string, unknown> {
+  const provider = settings.provider
+  if (provider === 'volcengine') {
+    return { ...settings.providers.volcengine, voice_type: voice, format }
+  }
+  if (provider === 'siliconflow-cn') {
+    return { ...settings.providers['siliconflow-cn'], voice_type: voice, format }
+  }
+  throw new Error(`unknown TTS provider "${provider}"`)
+}
+
+/**
  * 按当前配置把文本合成为音频字节(双语规划 + 分片合成 + 拼接)。
  * @param tts - TTS 注册表。
  * @param settings - 已解析设置。
  * @param text - 待合成文本。
- * @param format - 合成格式,默认 `volcengine.format`(host_play 用 `play_format`)。
+ * @param format - 合成格式,默认当前 provider 的 `format`(host_play 用 `play_format`)。
  * @param voiceId - 当前 dsh-voice 的 voice id(命中 voice_profiles 时覆盖音色)。
  * @returns 拼接后的音频字节。
  */
@@ -151,19 +231,20 @@ async function synthesizeSpeech(
   tts: TtsService,
   settings: VoiceTtsSettings,
   text: string,
-  format = settings.providers.volcengine.format,
+  format?: string,
   voiceId?: string,
 ): Promise<Uint8Array> {
-  const volc = settings.providers.volcengine
-  const plan = planBilingualSpeech(text, volc, voiceId)
+  const view = deliveryView(settings)
+  const formatResolved = format ?? view.format
+  const plan = planBilingualSpeech(text, view, voiceId)
   if (plan.runs.length === 0) {
-    throw new Error(`no speechable sentences after bilingual=${volc.bilingual} filter`)
+    throw new Error(`no speechable sentences after bilingual=${view.bilingual} filter`)
   }
   const parts: Uint8Array[] = []
   for (const run of plan.runs) {
     const result = await tts.synthesize(settings.provider, {
       text: run.text,
-      config: { ...volc, voice_type: run.voice, format },
+      config: synthConfig(settings, run.voice, formatResolved),
     })
     parts.push(result.audio)
   }
@@ -181,16 +262,16 @@ async function synthesizeSpeech(
  * @returns 拼接后的音频字节。
  */
 async function streamSpeech(tts: TtsService, settings: VoiceTtsSettings, text: string, voiceId?: string): Promise<Uint8Array> {
-  const volc = settings.providers.volcengine
-  const plan = planBilingualSpeech(text, volc, voiceId)
+  const view = deliveryView(settings)
+  const plan = planBilingualSpeech(text, view, voiceId)
   if (plan.runs.length === 0) {
-    throw new Error(`no speechable sentences after bilingual=${volc.bilingual} filter`)
+    throw new Error(`no speechable sentences after bilingual=${view.bilingual} filter`)
   }
   const parts: Uint8Array[] = []
   for (const run of plan.runs) {
     for await (const chunk of tts.stream(settings.provider, {
       text: run.text,
-      config: { ...volc, voice_type: run.voice },
+      config: synthConfig(settings, run.voice, view.format),
     })) {
       parts.push(chunk.audio)
     }
@@ -227,29 +308,29 @@ async function deliverSpeech(
   voiceId: string | undefined,
   warn: (line: string) => void = () => {},
 ): Promise<DeliveryOutcome> {
-  const volc = settings.providers.volcengine
+  const view = deliveryView(settings)
   if (delivery === 'off') {
     throw new Error('delivery is off')
   }
   if (delivery === 'stream') {
     const audio = await streamSpeech(tts, settings, text, voiceId)
-    const path = resolve(cwd, `${baseName}.${volc.format}`)
+    const path = resolve(cwd, `${baseName}.${view.format}`)
     writeFileSync(path, audio)
-    return { audio, path, played: false, format: volc.format }
+    return { audio, path, played: false, format: view.format }
   }
   if (delivery === 'host_play') {
-    const audio = await synthesizeSpeech(tts, settings, text, volc.play_format, voiceId)
-    const path = resolve(cwd, `${baseName}.${volc.play_format}`)
+    const audio = await synthesizeSpeech(tts, settings, text, view.play_format, voiceId)
+    const path = resolve(cwd, `${baseName}.${view.play_format}`)
     writeFileSync(path, audio)
-    const child = playFile({ path, format: volc.play_format }, error => {
+    const child = playFile({ path, format: view.play_format }, error => {
       warn(`host_play failed: ${error.message}`)
     })
-    return { audio, path, played: child !== undefined, format: volc.play_format }
+    return { audio, path, played: child !== undefined, format: view.play_format }
   }
-  const audio = await synthesizeSpeech(tts, settings, text, volc.format, voiceId)
-  const path = resolve(cwd, `${baseName}.${volc.format}`)
+  const audio = await synthesizeSpeech(tts, settings, text, view.format, voiceId)
+  const path = resolve(cwd, `${baseName}.${view.format}`)
   writeFileSync(path, audio)
-  return { audio, path, played: false, format: volc.format }
+  return { audio, path, played: false, format: view.format }
 }
 
 /**
@@ -272,20 +353,28 @@ async function executeTtsCommand(
       return { kind: 'success', text: USAGE }
     case 'status':
       return { kind: 'success', text: renderStatus(scope.get(), tts.listProviders()) }
+    case 'use': {
+      if (!tts.listProviders().includes(command.provider)) {
+        return { kind: 'error', text: `unknown provider "${command.provider}". Available: ${tts.listProviders().join(', ')}` }
+      }
+      await scope.update({ provider: command.provider })
+      return { kind: 'success', text: renderStatus(scope.get(), tts.listProviders()) }
+    }
     case 'list-voices':
       return {
         kind: 'success',
         text: listVoicesText(filterVoices(tts.listVoices(command.provider), command.query), command.provider),
       }
     case 'config-template':
-      if (command.provider !== 'volcengine') {
+      if (!tts.listProviders().includes(command.provider)) {
         return { kind: 'error', text: `unknown provider "${command.provider}". Available: ${tts.listProviders().join(', ')}` }
       }
-      return { kind: 'success', text: renderConfigTemplate() }
+      return { kind: 'success', text: renderConfigTemplate(command.provider) }
     case 'config-json': {
       const parsed = parseJsonOrThrow(command.json)
+      const provider = scope.get().provider
       try {
-        await scope.update({ providers: { volcengine: parsed } })
+        await scope.update({ providers: { [provider]: parsed } })
       } catch (error) {
         return { kind: 'error', text: `config rejected: ${describeError(error)}` }
       }
@@ -392,26 +481,26 @@ function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: () => stri
         return scope.get()
       },
       status() {
-        return describeStatus(activeScope?.get() ?? DEFAULT_SETTINGS, resolveVoiceId())
+        return describeStatus(deliveryView(activeScope?.get() ?? DEFAULT_SETTINGS), resolveVoiceId())
       },
-      listVoices() {
-        return tts.listVoices('volcengine')
+      listVoices(providerId) {
+        return tts.listVoices(providerId)
       },
-      async keyStatus() {
+      async keyStatus(ref) {
         const credentials = ctx.get('credentials')
         if (credentials === undefined) return { configured: false, source: null, writable: false }
-        const info = await credentials.describe(credentialRef(VOLCENGINE_API_KEY_REF))
+        const info = await credentials.describe(credentialRef(ref))
         return { configured: info.configured, source: info.source ?? null, writable: info.writable }
       },
-      async setKey(value) {
+      async setKey(ref, value) {
         const credentials = ctx.get('credentials')
         if (credentials === undefined) throw new Error('credentials service is not available')
-        await credentials.set(credentialRef(VOLCENGINE_API_KEY_REF), value)
+        await credentials.set(credentialRef(ref), value)
       },
-      async unsetKey() {
+      async unsetKey(ref) {
         const credentials = ctx.get('credentials')
         if (credentials === undefined) throw new Error('credentials service is not available')
-        await credentials.unset(credentialRef(VOLCENGINE_API_KEY_REF))
+        await credentials.unset(credentialRef(ref))
       },
     }
     const disposeChannel = cctx.connection.rpc.handle(
@@ -435,23 +524,8 @@ export function apply(ctx: Context): void {
   // Service Definition —— 构造即注册为 ctx.tts,随插件 fiber 销毁。
   const tts = new TtsService(ctx)
 
-  // 凭证解析:走 dsh 的 credentials seam(对齐 llm-deepseek 的 per-operation resolve),
-  // 不直接读 process.env。无 credentials seam 时回退环境变量(credentials-local
-  // 本身就把 process env / .env 作为一层,此处 fallback 仅覆盖 seam 未挂载的嵌入场景)。
-  const resolveApiKey = async (): Promise<string> => {
-    const ref = credentialRef(VOLCENGINE_API_KEY_REF)
-    const credentials = ctx.get('credentials')
-    if (credentials !== undefined) {
-      const hit = await credentials.resolve(ref)
-      if (hit !== undefined) return hit.value
-    }
-    const ambient = process.env[VOLCENGINE_API_KEY_REF]
-    if (ambient !== undefined && ambient.length > 0) return ambient
-    throw new Error(`missing API key: store ${VOLCENGINE_API_KEY_REF} through the credentials service (dsh credentials) or export it in the environment`)
-  }
-
-  // Provider —— 首版仅 volcengine。
-  ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider(resolveApiKey)), 'volcengine provider')
+  // 当前生效设置(settings 挂载前为默认,挂载后随 watch 更新)。
+  let activeSettings: VoiceTtsSettings = DEFAULT_SETTINGS
 
   // 软读 dsh-voice 的当前 voice id(`voice.tone`),用于 per-voice 音色映射。
   // 无 dsh-voice(settings 不存在或 voice 命名空间未注册)时返回 undefined,映射自动跳过。
@@ -462,8 +536,31 @@ export function apply(ctx: Context): void {
     return voice?.tone
   }
 
-  // 当前生效设置(settings 挂载前为默认,挂载后随 watch 更新)。
-  let activeSettings: VoiceTtsSettings = DEFAULT_SETTINGS
+  // 取某 provider 的凭证引用名(KEY NAME)。未知 provider 抛错。
+  const apiKeyRefOf = (providerId: string): string => {
+    if (providerId === 'volcengine') return activeSettings.providers.volcengine.apiKeyRef
+    if (providerId === 'siliconflow-cn') return activeSettings.providers['siliconflow-cn'].apiKeyRef
+    throw new Error(`unknown TTS provider "${providerId}"`)
+  }
+
+  // 凭证解析:走 dsh 的 credentials seam(对齐 llm-deepseek 的 per-operation resolve),
+  // 按 provider 各自的 apiKeyRef 解析,不直接读 process.env。无 credentials seam 时
+  // 回退环境变量(credentials-local 本身就把 process env / .env 作为一层)。
+  const resolveApiKey = async (providerId: string): Promise<string> => {
+    const ref = credentialRef(apiKeyRefOf(providerId))
+    const credentials = ctx.get('credentials')
+    if (credentials !== undefined) {
+      const hit = await credentials.resolve(ref)
+      if (hit !== undefined) return hit.value
+    }
+    const ambient = process.env[ref as string]
+    if (ambient !== undefined && ambient.length > 0) return ambient
+    throw new Error(`missing API key for ${providerId}: store ${ref} through the credentials service (dsh credentials) or export it in the environment`)
+  }
+
+  // Providers —— 每个 provider 一个实现,key 按各自 apiKeyRef 解析。
+  ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider(() => resolveApiKey('volcengine'))), 'volcengine provider')
+  ctx.effect(() => tts.registerProvider(new SiliconflowTtsProvider(() => resolveApiKey('siliconflow-cn'))), 'siliconflow-cn provider')
 
   // turn-final 交付:delivery=off 不处理;否则每轮结束把最终回复按 delivery 交付。
   ctx.on('session/event', (session, event) => {
@@ -500,23 +597,33 @@ export function apply(ctx: Context): void {
   })
 
   // 凭证命令:独立命令 + recordInput:false,让 API key 不进 session log。
-  // set 走 ctx.credentials.set(写入 .credentials.yaml),status 只报 configured/source 不回显值。
+  // set 走 ctx.credentials.set(写入 .credentials.yaml),按 provider 各自的 apiKeyRef;
+  // status 只报 configured/source 不回显值。
   ctx.commands.register({
     name: 'dsh-voice-tts-key',
-    description: 'set/unset the volcengine TTS API key (recorded privately)',
-    input: { hint: '[set <value>|unset|status]' },
+    description: 'set/unset a TTS provider API key (recorded privately)',
+    input: { hint: '[set [provider] <value>|unset [provider]|status [provider]]' },
     recordInput: false,
     handler: async invocation => {
-      const command = parseKeyCommand(invocation.rawInput)
-      const ref = credentialRef(VOLCENGINE_API_KEY_REF)
+      const command = parseKeyCommand(invocation.rawInput, tts.listProviders())
+      const providerId = command.provider ?? activeSettings.provider
       const credentials = ctx.get('credentials')
       if (credentials === undefined) {
         return { kind: 'error', text: 'credentials service is not available' }
       }
+      let ref: ReturnType<typeof credentialRef>
+      try {
+        ref = credentialRef(apiKeyRefOf(providerId))
+      } catch (error) {
+        return { kind: 'error', text: describeError(error) }
+      }
       if (command.kind === 'set') {
+        if (command.value.length === 0) {
+          return { kind: 'error', text: 'usage: /dsh-voice-tts-key set [provider] <value>' }
+        }
         try {
           await credentials.set(ref, command.value)
-          return { kind: 'success', text: 'API key stored.' }
+          return { kind: 'success', text: `API key stored for ${providerId} (${ref}).` }
         } catch (error) {
           return { kind: 'error', text: `failed to store API key: ${describeError(error)}` }
         }
@@ -524,14 +631,14 @@ export function apply(ctx: Context): void {
       if (command.kind === 'unset') {
         try {
           await credentials.unset(ref)
-          return { kind: 'success', text: 'API key removed.' }
+          return { kind: 'success', text: `API key removed for ${providerId} (${ref}).` }
         } catch (error) {
           return { kind: 'error', text: `failed to remove API key: ${describeError(error)}` }
         }
       }
       const info = await credentials.describe(ref)
       const source = info.source !== undefined ? `, source: ${info.source}` : ''
-      return { kind: 'success', text: `configured: ${String(info.configured)}${source}, writable: ${String(info.writable)}` }
+      return { kind: 'success', text: `[${providerId}] ${ref}: configured=${String(info.configured)}${source}, writable=${String(info.writable)}` }
     },
   })
 

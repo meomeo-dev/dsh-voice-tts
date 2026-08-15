@@ -11,11 +11,11 @@ import type { ConfigTemplate, TtsChunk, TtsResult, VolcengineConfig } from './ty
 export const VOLCENGINE_API_URL = 'https://openspeech.bytedance.com/api/v3/tts/unidirectional'
 
 /**
- * API key 的凭证引用名(credential-ref,存 `~/.dsh/.credentials.yaml`)。
+ * API key 的默认凭证引用名(KEY NAME,存 `~/.dsh/.credentials.yaml`)。
  * 配置载体只存这个引用名、不存秘密本身;运行时经 `ctx.credentials.resolve`
  * 解析,底层 credentials-local 会把 process env / `.env` 作为回退层。
  */
-export const VOLCENGINE_API_KEY_REF = 'VOLCENGINE_TTS_API_KEY'
+export const DEFAULT_VOLCENGINE_API_KEY_REF = 'VOLCENGINE_TTS_API_KEY'
 
 /** 默认音色:2.0 标准首个通用女声 Vivi 2.0。 */
 export const DEFAULT_VOICE_TYPE = 'zh_female_vv_uranus_bigtts'
@@ -73,7 +73,7 @@ export const VOLCENGINE_CONFIG_TEMPLATE: ConfigTemplate = {
       description: 'per-voice 音色映射 { <voice id>: { zh, en, mixed } },命中当前 dsh-voice 的 voice id 时取代 voices',
     },
   },
-  credentials: { apiKeyRef: VOLCENGINE_API_KEY_REF },
+  credentials: { apiKeyRef: DEFAULT_VOLCENGINE_API_KEY_REF },
 }
 
 /**

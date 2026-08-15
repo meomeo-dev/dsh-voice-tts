@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { resolvedVoice } from './bilingual.js'
-import type { TtsVoice, VoiceTtsSettings } from './types.js'
+import type { BilingualVoiceConfig, TtsVoice, VoiceTtsSettings } from './types.js'
 
 // ---- token ----
 
@@ -180,16 +180,15 @@ export interface PanelStatus {
 }
 
 /** 计算状态预览:复用合成管线同源的 `resolvedVoice`,避免两处漂移。 */
-export function describeStatus(settings: VoiceTtsSettings, voiceId: string | undefined): PanelStatus {
-  const volc = settings.providers.volcengine
-  const matched = voiceId !== undefined && volc.voice_profiles[voiceId] !== undefined
+export function describeStatus(config: BilingualVoiceConfig, voiceId: string | undefined): PanelStatus {
+  const matched = voiceId !== undefined && config.voice_profiles[voiceId] !== undefined
   return {
     voiceId: voiceId ?? null,
     matchedProfile: matched,
     voices: {
-      zh: resolvedVoice('zh', volc, voiceId),
-      en: resolvedVoice('en', volc, voiceId),
-      mixed: resolvedVoice('mixed', volc, voiceId),
+      zh: resolvedVoice('zh', config, voiceId),
+      en: resolvedVoice('en', config, voiceId),
+      mixed: resolvedVoice('mixed', config, voiceId),
     },
   }
 }
@@ -209,21 +208,33 @@ export interface PanelDeps {
   getConfig(): VoiceTtsSettings
   /** 全量写回设置(经 settings scope 校验),返回写入后的解析值。 */
   setConfig(config: Record<string, unknown>): Promise<VoiceTtsSettings>
-  /** 状态预览(当前 voice id + 生效音色)。 */
+  /** 状态预览(当前 provider + 生效音色)。 */
   status(): PanelStatus
-  /** volcengine 音色表。 */
-  listVoices(): readonly TtsVoice[]
-  /** API key 只读状态。 */
-  keyStatus(): Promise<PanelKeyStatus>
-  /** 写 API key(走 credentials seam)。 */
-  setKey(value: string): Promise<void>
-  /** 删 API key。 */
-  unsetKey(): Promise<void>
+  /** 某 provider 的音色表。 */
+  listVoices(providerId: string): readonly TtsVoice[]
+  /** 某凭证引用(KEY NAME)的只读状态。 */
+  keyStatus(ref: string): Promise<PanelKeyStatus>
+  /** 写某凭证引用(KEY NAME)的值(走 credentials seam)。 */
+  setKey(ref: string, value: string): Promise<void>
+  /** 删某凭证引用(KEY NAME)。 */
+  unsetKey(ref: string): Promise<void>
 }
 
-/** 只带 token 的请求载荷(config-get / status-get / voices-list / key-status / key-unset)。 */
+/** 只带 token 的请求载荷(config-get / status-get)。 */
 interface TokenPayload {
   acToken: string
+}
+
+/** 带 provider 的请求载荷(voices-list)。 */
+interface ProviderPayload {
+  acToken: string
+  provider: string
+}
+
+/** 带凭证引用名(KEY NAME)的请求载荷(key-status / key-unset)。 */
+interface RefPayload {
+  acToken: string
+  ref: string
 }
 
 /** `config-set` 请求载荷:token + 完整配置对象。 */
@@ -232,14 +243,25 @@ interface ConfigSetPayload {
   config: Record<string, unknown>
 }
 
-/** `key-set` 请求载荷:token + 待写入的值。 */
+/** `key-set` 请求载荷:token + 凭证引用名 + 待写入的值。 */
 interface KeySetPayload {
   acToken: string
+  ref: string
   value: string
 }
 
 const TOKEN_PAYLOAD: z<TokenPayload> = z.object({
   acToken: z.string().min(1).required(),
+})
+
+const PROVIDER_PAYLOAD: z<ProviderPayload> = z.object({
+  acToken: z.string().min(1).required(),
+  provider: z.string().min(1).required(),
+})
+
+const REF_PAYLOAD: z<RefPayload> = z.object({
+  acToken: z.string().min(1).required(),
+  ref: z.string().min(1).required(),
 })
 
 const CONFIG_SET_PAYLOAD: z<ConfigSetPayload> = z.object({
@@ -249,6 +271,7 @@ const CONFIG_SET_PAYLOAD: z<ConfigSetPayload> = z.object({
 
 const KEY_SET_PAYLOAD: z<KeySetPayload> = z.object({
   acToken: z.string().min(1).required(),
+  ref: z.string().min(1).required(),
   value: z.string().min(1).required(),
 })
 
@@ -314,28 +337,28 @@ export async function handlePanelRpc(
       }
       case 'voices-list': {
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')
-        const parsed = parsePayload(TOKEN_PAYLOAD, payload)
+        const parsed = parsePayload(PROVIDER_PAYLOAD, payload)
         if (!parsed.ok) return panelError('bad-request', parsed.message)
-        return { ok: true, value: { voices: deps.listVoices() } }
+        return { ok: true, value: { voices: deps.listVoices(parsed.value.provider) } }
       }
       case 'key-status': {
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')
-        const parsed = parsePayload(TOKEN_PAYLOAD, payload)
+        const parsed = parsePayload(REF_PAYLOAD, payload)
         if (!parsed.ok) return panelError('bad-request', parsed.message)
-        return { ok: true, value: { key: await deps.keyStatus() } }
+        return { ok: true, value: { key: await deps.keyStatus(parsed.value.ref) } }
       }
       case 'key-set': {
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')
         const parsed = parsePayload(KEY_SET_PAYLOAD, payload)
         if (!parsed.ok) return panelError('bad-request', parsed.message)
-        await deps.setKey(parsed.value.value)
+        await deps.setKey(parsed.value.ref, parsed.value.value)
         return { ok: true, value: {} }
       }
       case 'key-unset': {
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')
-        const parsed = parsePayload(TOKEN_PAYLOAD, payload)
+        const parsed = parsePayload(REF_PAYLOAD, payload)
         if (!parsed.ok) return panelError('bad-request', parsed.message)
-        await deps.unsetKey()
+        await deps.unsetKey(parsed.value.ref)
         return { ok: true, value: {} }
       }
       default:

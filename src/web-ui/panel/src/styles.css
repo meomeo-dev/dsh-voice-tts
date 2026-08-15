@@ -265,6 +265,17 @@ button.refresh.danger:hover {
   max-width: 360px;
 }
 
+/* 凭证(KEY NAME + 值)管理区 */
+.credential {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-l1);
+  border-radius: 6px;
+  background: var(--bg-platform);
+}
+
 /* 提示 / 空态 */
 .banner {
   padding: 10px 14px;

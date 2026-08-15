@@ -98,10 +98,29 @@ export type VoiceTtsProfiles = Record<string, VoiceTtsVoices>
 /** turn-final 的音频交付方式。 */
 export type DeliveryMode = 'off' | 'file' | 'host_play' | 'stream'
 
-/** volcengine provider 的已解析配置(settings schema 解析后的字段)。 */
-export interface VolcengineConfig {
-  /** 音色 ID(`speaker`),必选。 */
+/**
+ * 双语播报 + 音色映射的共享配置(provider 无关)。各 provider 的 config 都继承它,
+ * 双语规划(`bilingual.ts`)只依赖这一份,不感知 provider 差异。
+ */
+export interface BilingualVoiceConfig {
+  /** bilingual 播报模式。 */
+  bilingual: BilingualMode
+  /** 默认音色 ID(volcengine 的 `speaker` / siliconflow 的 `voice`,值随 provider)。 */
   voice_type: string
+  /** 各语言类别音色覆盖(缺省回退 voice_type)。 */
+  voices: VoiceTtsVoices
+  /** per-voice 音色覆盖:命中当前 dsh-voice 的 voice id 时取代 `voices`。 */
+  voice_profiles: VoiceTtsProfiles
+}
+
+/** API key 的凭证引用(KEY NAME)。settings 只存引用名,值在 credentials 存储。 */
+export interface ApiKeyRefSettings {
+  /** 凭证引用名(如 `VOLCENGINE_TTS_API_KEY`),运行时经 `ctx.credentials.resolve` 解析。 */
+  apiKeyRef: string
+}
+
+/** volcengine provider 的已解析配置(合成参数 + 双语共享配置)。 */
+export interface VolcengineConfig extends BilingualVoiceConfig {
   /** 请求头 `X-Api-Resource-Id`(模型版本)。 */
   resource_id: VolcengineResourceId
   /** `req_params.model`,仅复刻音色需覆盖。 */
@@ -118,20 +137,38 @@ export interface VolcengineConfig {
   loudness_rate: number
   /** 音调,[-12, 12]。 */
   pitch: number
-  /** bilingual 播报模式。 */
-  bilingual: BilingualMode
-  /** 各语言类别音色覆盖(缺省)。 */
-  voices: VoiceTtsVoices
-  /** per-voice 音色覆盖:命中当前 voice id 时取代 `voices`。 */
-  voice_profiles: VoiceTtsProfiles
 }
 
-/** `voice-tts` 设置命名空间的已解析切片。 */
+/** siliconflow provider 的已解析配置(合成参数 + 双语共享配置)。 */
+export interface SiliconflowConfig extends BilingualVoiceConfig {
+  /** TTS 模型 id(如 `FunAudioLLM/CosyVoice2-0.5B`)。 */
+  model: string
+  /** 音频格式(file/stream 落盘用;映射到 API 的 `response_format`)。 */
+  format: 'mp3' | 'opus' | 'wav' | 'pcm'
+  /** host_play 的合成格式(跨平台播放器兼容,默认 wav)。 */
+  play_format: 'mp3' | 'opus' | 'wav' | 'pcm'
+  /** 采样率 Hz;不同格式允许值不同。 */
+  sample_rate: number
+  /** 语速,[0.25, 4.0]。 */
+  speed: number
+  /** 音量增益 dB,[-10, 10]。 */
+  gain: number
+}
+
+/** 一个 provider 的完整设置(config + 凭证引用)。 */
+export type VolcengineProviderSettings = VolcengineConfig & ApiKeyRefSettings
+/** 一个 siliconflow provider 的完整设置(config + 凭证引用)。 */
+export type SiliconflowProviderSettings = SiliconflowConfig & ApiKeyRefSettings
+
+/** `voice-tts` 设置命名空间的已解析切片(多 provider)。 */
 export interface VoiceTtsSettings {
   /** turn-final 交付方式:off 不处理 / file 落盘 / host_play 本机播放 / stream 流式。 */
   delivery: DeliveryMode
   /** 当前选中的 provider id。 */
   provider: string
-  /** 各 provider 的配置。 */
-  providers: { volcengine: VolcengineConfig }
+  /** 各 provider 的设置(键 = provider id,与注册的 provider 一一对应)。 */
+  providers: {
+    volcengine: VolcengineProviderSettings
+    'siliconflow-cn': SiliconflowProviderSettings
+  }
 }

@@ -4,16 +4,19 @@
  * @module dsh-voice-tts/command
  */
 
-import type { DeliveryMode, TtsVoice, VoiceTtsSettings } from './types.js'
+import type { BilingualVoiceConfig, DeliveryMode, TtsVoice, VoiceTtsSettings } from './types.js'
+import type { ApiKeyRefSettings } from './types.js'
 import { DEFAULT_VOICE_TYPE, VOLCENGINE_CONFIG_TEMPLATE } from './volcengine.js'
+import { SILICONFLOW_CONFIG_TEMPLATE } from './siliconflow.js'
 
 /** 命令用法回显文案。 */
 export const USAGE = [
   'Usage: /dsh-voice-tts [status|help]',
-  '  status                            # 当前 provider / delivery / 配置概览',
+  '  status                            # 当前 provider / delivery / 各 provider 配置概览',
+  '  use <provider>                    # 切换当前 provider(如 volcengine / siliconflow-cn)',
   '  list-voices [provider] [query]    # 列出可用音色(可按 voice_type/名称/场景/语种过滤)',
   '  config --template [provider]      # 输出某 provider 的完整配置模板(JSON)',
-  '  config --json <json>              # 用 JSON 覆盖 provider 配置(部分字段即可)',
+  '  config --json <json>              # 用 JSON 覆盖「当前 provider」的配置(部分字段即可)',
   '  speak [--delivery <mode>] <text>  # 合成文本,按 delivery(默认读 settings.delivery)交付',
   '  ui                                # 打印 Web 配置面板 URL(web 模式专用)',
 ].join('\n')
@@ -23,6 +26,7 @@ const DELIVERY_MODES: readonly DeliveryMode[] = ['off', 'file', 'host_play', 'st
 /** `/dsh-voice-tts` 的解析结果。 */
 export type TtsCommand =
   | { readonly kind: 'status' }
+  | { readonly kind: 'use'; readonly provider: string }
   | { readonly kind: 'list-voices'; readonly provider: string; readonly query: string }
   | { readonly kind: 'config-template'; readonly provider: string }
   | { readonly kind: 'config-json'; readonly json: string }
@@ -46,6 +50,10 @@ export function parseTtsCommand(rawInput: string): TtsCommand {
   const rest = space === -1 ? '' : input.slice(space + 1)
 
   switch (head) {
+    case 'use': {
+      const provider = rest.trim()
+      return provider.length > 0 ? { kind: 'use', provider } : { kind: 'help' }
+    }
     case 'list-voices': {
       const parts = rest.split(/\s+/u).filter(part => part.length > 0)
       return { kind: 'list-voices', provider: parts[0] ?? 'volcengine', query: parts.slice(1).join(' ') }
@@ -116,55 +124,69 @@ export function listVoicesText(voices: readonly TtsVoice[], provider: string): s
   return `${provider} voices (${voices.length}):\n${lines.join('\n')}`
 }
 
-/** 渲染 volcengine 的 `config --template` JSON 模板。 */
-export function renderConfigTemplate(): string {
+/** 按 provider id 渲染 `config --template` JSON 模板。 */
+export function renderConfigTemplate(providerId: string): string {
+  if (providerId === 'siliconflow-cn') return JSON.stringify(SILICONFLOW_CONFIG_TEMPLATE, null, 2)
   return JSON.stringify(VOLCENGINE_CONFIG_TEMPLATE, null, 2)
 }
 
 /**
- * 渲染 `status` 概览:当前 provider、delivery、已注册 provider 与 volcengine 配置。
+ * 渲染 `status` 概览:当前 provider、delivery、已注册 provider,以及每个 provider
+ * 的凭证引用名(KEY NAME,不回显值)与双语音色概览。
  * @param settings - 已解析设置。
  * @param providerIds - 已注册 provider id 列表。
  * @returns 多行概览文本。
  */
 export function renderStatus(settings: VoiceTtsSettings, providerIds: readonly string[]): string {
-  const v = settings.providers.volcengine
-  return [
+  const lines = [
     `provider:  ${settings.provider}`,
     `delivery:  ${settings.delivery}`,
     `providers: ${providerIds.join(', ')}`,
-    `volcengine config:`,
-    `  voice_type:   ${v.voice_type}`,
-    `  resource_id:  ${v.resource_id}`,
-    `  format:       ${v.format}  play_format: ${v.play_format} @ ${v.sample_rate} Hz`,
-    `  speech_rate:  ${v.speech_rate}  loudness_rate: ${v.loudness_rate}  pitch: ${v.pitch}`,
-    `  bilingual:    ${v.bilingual}`,
-    `  voices:       zh=${v.voices.zh ?? v.voice_type}  en=${v.voices.en ?? v.voice_type}  mixed=${v.voices.mixed ?? v.voices.zh ?? v.voice_type}`,
-  ].join('\n')
+  ]
+  for (const [id, cfg] of Object.entries(settings.providers)) {
+    const c = cfg as BilingualVoiceConfig & ApiKeyRefSettings
+    lines.push(`${id} config:`)
+    lines.push(`  apiKeyRef:  ${c.apiKeyRef}`)
+    lines.push(`  voice_type: ${c.voice_type}`)
+    lines.push(`  bilingual:  ${c.bilingual}`)
+    lines.push(`  voices:     zh=${c.voices.zh ?? c.voice_type}  en=${c.voices.en ?? c.voice_type}  mixed=${c.voices.mixed ?? c.voices.zh ?? c.voice_type}`)
+  }
+  return lines.join('\n')
 }
 
 /** 默认音色 id(供 status 展示)。 */
 export { DEFAULT_VOICE_TYPE }
 
-/** `/dsh-voice-tts-key` 命令的解析结果。 */
+/** `/dsh-voice-tts-key` 命令的解析结果(provider 可选,缺省用当前 provider)。 */
 export type KeyCommand =
-  | { readonly kind: 'status' }
-  | { readonly kind: 'set'; readonly value: string }
-  | { readonly kind: 'unset' }
+  | { readonly kind: 'status'; readonly provider?: string }
+  | { readonly kind: 'set'; readonly provider?: string; readonly value: string }
+  | { readonly kind: 'unset'; readonly provider?: string }
 
 /**
- * 解析 `/dsh-voice-tts-key` 命令:set <value> 存、unset 删、其余查看状态。
+ * 解析 `/dsh-voice-tts-key` 命令:`set [provider] <value>` 存、`unset [provider]` 删、
+ * `status [provider]` 查看状态。provider 缺省由调用方用当前 provider 补齐。
  * 该命令 `recordInput: false`,value 不进 session log。
  * @param rawInput - 命令名之后的原始文本(含前导空白)。
+ * @param providerIds - 已注册 provider id 列表(用于区分 `set <provider> <value>` 与 `set <value>`)。
  * @returns 解析结果;非法输入回退 status。
  */
-export function parseKeyCommand(rawInput: string): KeyCommand {
-  const input = rawInput.trim()
-  if (input.length === 0 || input === 'status') return { kind: 'status' }
-  if (input === 'unset') return { kind: 'unset' }
-  if (input.startsWith('set ')) {
-    const value = input.slice('set '.length).trim()
-    if (value.length > 0) return { kind: 'set', value }
+export function parseKeyCommand(rawInput: string, providerIds: readonly string[] = []): KeyCommand {
+  const parts = rawInput.trim().split(/\s+/u).filter(part => part.length > 0)
+  const head = parts[0] ?? ''
+  const rest = parts.slice(1)
+  if (head === '' || head === 'status') {
+    return { kind: 'status', ...(rest.length > 0 ? { provider: rest[0] } : {}) }
+  }
+  if (head === 'unset') {
+    return { kind: 'unset', ...(rest.length > 0 ? { provider: rest[0] } : {}) }
+  }
+  if (head === 'set') {
+    if (rest.length === 0) return { kind: 'status' }
+    if (providerIds.includes(rest[0]!)) {
+      return { kind: 'set', provider: rest[0], value: rest.slice(1).join(' ') }
+    }
+    return { kind: 'set', value: rest.join(' ') }
   }
   return { kind: 'status' }
 }
