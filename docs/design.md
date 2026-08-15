@@ -51,12 +51,13 @@ dsh-tts-player   (Consumer —— 自动播放 / 手动播放按钮 / 命令)
 ```yaml
 voice-tts:
   delivery: off                      # turn-final 交付:off / file / host_play / stream
-  provider: volcengine               # 当前选中的 provider
-  providers:
+  provider: volcengine               # 当前选中的 provider(合成/turn-final 用它)
+  providers:                         # 多 provider 字典,键 = provider id
     volcengine:
+      apiKeyRef: VOLCENGINE_TTS_API_KEY         # KEY NAME(凭证引用名,值在 credentials)
       voice_type: zh_female_vv_uranus_bigtts   # speaker(音色 ID),必选
       resource_id: seed-tts-2.0               # X-Api-Resource-Id(模型版本)
-      model: ""                              # req_params.model 显式覆盖(通常留空,由 X-Api-Resource-Id 决定;仅旧版 1.0 音色需设如 seed-tts-1.1)
+      model: ""                              # req_params.model 显式覆盖(通常留空;仅旧版 1.0 音色需设)
       format: mp3                             # file/stream 落盘格式:mp3/pcm/ogg_opus/wav
       play_format: wav                        # host_play 合成格式(跨平台系统播放器兼容,默认 wav)
       sample_rate: 24000                      # audio_params.sample_rate [8000,48000]
@@ -73,6 +74,18 @@ voice-tts:
           zh: zh_male_m191_uranus_bigtts
           en: en_male_david_uranus_bigtts
           mixed: zh_male_m191_uranus_bigtts
+    siliconflow-cn:
+      apiKeyRef: SILICONFLOW_API_KEY           # KEY NAME(凭证引用名)
+      voice_type: FunAudioLLM/CosyVoice2-0.5B:alex  # voice id(模型前缀形式)
+      model: FunAudioLLM/CosyVoice2-0.5B      # TTS 模型 id
+      format: mp3                             # response_format 映射:mp3/opus/wav/pcm
+      play_format: wav                        # host_play 合成格式(默认 wav)
+      sample_rate: 32000                      # 采样率(opus 仅 48000;mp3 32000/44100)
+      speed: 1                                # 语速 [0.25,4.0]
+      gain: 0                                 # 音量增益 dB [-10,10]
+      bilingual: both
+      voices: {}
+      voice_profiles: {}
 ```
 
 字段与 volcengine API 的映射(权威见 `api-unidirectional-http.md`):
@@ -97,24 +110,29 @@ voice-tts:
 
 ### 3.2 credentials(API key,绝不进 settings / 硬编码 / 直接读 env)
 
-API key 走 dsh 的 **credentials seam**(`ctx.credentials`),凭证引用名 `VOLCENGINE_TTS_API_KEY`:
+API key 走 dsh 的 **credentials seam**(`ctx.credentials`)。每个 provider 配置里只存 **KEY NAME(凭证引用名 `apiKeyRef`)**,不存值;运行时按 provider 各自的 `apiKeyRef` 解析(对齐 llm-deepseek 的 per-operation resolve 语义):
 
-- 配置载体只存**引用名**,不存值;运行时每次合成调用 `ctx.credentials.resolve(credentialRef('VOLCENGINE_TTS_API_KEY'))` 解析(对齐 llm-deepseek 的 per-operation resolve 语义)。
+- volcengine → `apiKeyRef: VOLCENGINE_TTS_API_KEY`
+- siliconflow-cn → `apiKeyRef: SILICONFLOW_API_KEY`
+
 - 凭证值存 `$DSH_HOME/.credentials.yaml`(`0600`,owner-only 目录),由 `dsh-credentials-local` provider 托管:
   ```yaml
   # $DSH_HOME/.credentials.yaml
   VOLCENGINE_TTS_API_KEY: <value>
+  SILICONFLOW_API_KEY: <value>
   ```
 - credentials-local 的解析链:继承 process env(只读、最高)→ `.credentials.yaml`(可写)→ `<cwd>/.env` / `$DSH_HOME/.env`(回退)。所以凭证**可通过**环境变量 `.env` 覆盖,但插件代码不直接读 `process.env`——它只认 `ctx.credentials.resolve`,这样 `describe()` 能报告「从哪来、可写吗」、轮换凭证不碰配置、settings 文档不含秘密。
-- 无 credentials seam 挂载的嵌入场景,才回退读 `process.env[VOLCENGINE_TTS_API_KEY]`(与 llm-deepseek 的 `credentials === undefined` 分支一致)。
+- 无 credentials seam 挂载的嵌入场景,才回退读 `process.env[ref]`(与 llm-deepseek 的 `credentials === undefined` 分支一致)。
 
-**命令行管理**:提供 `/dsh-voice-tts-key` 命令,把 key 的写入/删除/查看收敛到 credentials seam,避免用户手写 `.credentials.yaml`:
+**命令行管理**:提供 `/dsh-voice-tts-key` 命令,按 provider 的 `apiKeyRef` 管理 key 值,避免用户手写 `.credentials.yaml`:
 
 ```
-/dsh-voice-tts-key set <value>    # 写 .credentials.yaml(0600)
-/dsh-voice-tts-key unset          # 删除
-/dsh-voice-tts-key status         # 只报 configured / source / writable,不回显值
+/dsh-voice-tts-key set [provider] <value>   # 写 .credentials.yaml(0600),缺省当前 provider
+/dsh-voice-tts-key unset [provider]         # 删除
+/dsh-voice-tts-key status [provider]        # 只报 provider / KEY NAME / configured / source / writable,不回显值
 ```
+
+**面板管理**:配置面板每个 provider 卡片内有 KEY NAME 下拉框 + 掩码输入 set/unset,值永不明文回显。
 
 该命令 `recordInput: false`,参数不进 session log(见 §4.3);`set` 走 `ctx.credentials.set`(写 `.credentials.yaml`),`status` 走 `ctx.credentials.describe`(报告「从哪来、可写吗」但不回显密钥值)。
 
@@ -170,12 +188,13 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`),凭证引用名 `VOL
 ### 4.3 其它子命令
 
 ```
-/dsh-voice-tts status                 # 当前 provider / autoplay / 配置概览
+/dsh-voice-tts status                 # 当前 provider / delivery / 各 provider 配置概览
+/dsh-voice-tts use <provider>         # 切换当前 provider(volcengine / siliconflow-cn)
 /dsh-voice-tts list-voices [provider] # 列出可用音色(场景/音色名/voice_type/语言/是否支持指令)
-/dsh-voice-tts config --json <json>   # 覆盖配置
-/dsh-voice-tts-key set <value>        # 存 API key(recordInput:false,value 不进 session log)
-/dsh-voice-tts-key unset              # 删 API key
-/dsh-voice-tts-key status             # 只报 configured/source/writable,不回显值
+/dsh-voice-tts config --json <json>   # 覆盖「当前 provider」配置
+/dsh-voice-tts-key set [provider] <value>  # 存该 provider 的 API key(recordInput:false)
+/dsh-voice-tts-key unset [provider]        # 删该 provider 的 API key
+/dsh-voice-tts-key status [provider]       # 只报 KEY NAME / configured / source,不回显值
 ```
 
 ## 5. JSON 转义探针结论(已定稿)
@@ -261,11 +280,14 @@ volcengine 音色列表已整理为权威参考:
 | `_tob`(`ICL_uranus_*_tob`) | 声音复刻 | `seed-icl-2.0` | 200 |
 | `mars/moon/wvae_bigtts` | 多情感(emotion) | `seed-tts-2.0` | 135 |
 
-首版 provider 只支持 **`seed-tts-2.0` 标准 + 多语种**;声音复刻与多情感列为后续扩展(见 §10 非目标)。
+首版 volcengine provider 只支持 **`seed-tts-2.0` 标准 + 多语种**;声音复刻与多情感列为后续扩展(见 §10 非目标)。
+
+siliconflow 音色:系统预设 8 个 CosyVoice2-0.5B 音色(alex/benjamin/charles/david/anna/bella/claire/diana),`voice_type` 用「模型:音色名」前缀形式(如 `FunAudioLLM/CosyVoice2-0.5B:alex`)。权威见 https://api-docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech。
 
 ## 9. 文档证据
 
-- 技术文档:`docs/tech_stack/tts/volcengine/api-unidirectional-http.md`(接口/参数/鉴权)。
+- volcengine 技术文档:`docs/tech_stack/tts/volcengine/api-unidirectional-http.md`(接口/参数/鉴权)。
+- siliconflow 技术文档:https://api-docs.siliconflow.cn/docs/api/audio-speech-post(接口/参数/鉴权)、https://api-docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech(音色/模型)。
 - 音色列表:`docs/tech_stack/tts/volcengine/voices.md`(场景/音色名/voice_type/语言)。
 - **过期时间:D+90 天**。今天 2026-08-14 → 过期 2026-11-12。过期后需重新抓取核对。
 
@@ -283,7 +305,7 @@ volcengine 音色列表已整理为权威参考:
 ## 11. 非目标(首版)
 
 - 不做流式 TTS / 实时字幕对齐。
-- 不做多 provider(先仅 volcengine)。
+- 多 provider 已支持(volcengine + siliconflow-cn);不承诺任意 provider 类型(新增 provider 需各加 config schema + provider 实现 + 音色表)。
 - 不做语音识别(ASR),只做 TTS。
 - 不做声音复刻(`seed-icl-2.0`)与多情感(`mars/moon/wvae`)音色。
 - 不做 `additions` 进阶参数(silence/markdown/emoji/dialect)、`context_texts` 语音指令、`section_id`、`tone_fidelity`、字幕、缓存。
