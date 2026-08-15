@@ -6,7 +6,7 @@
  * @module dsh-voice-tts/siliconflow
  */
 
-import type { ConfigTemplate, SiliconflowConfig, TtsChunk, TtsResult } from './types.js'
+import type { ConfigTemplate, SiliconflowConfig, TtsChunk, TtsResult, TunableParam } from './types.js'
 
 /** 语音合成接口。 */
 export const SILICONFLOW_API_URL = 'https://api.siliconflow.cn/v1/audio/speech'
@@ -25,6 +25,15 @@ export const SILICONFLOW_MODELS: readonly string[] = ['FunAudioLLM/CosyVoice2-0.
 
 /** 默认音色:alex(沉稳男声)。 */
 export const DEFAULT_SILICONFLOW_VOICE = 'FunAudioLLM/CosyVoice2-0.5B:alex'
+
+/**
+ * 槽位可调参数注册表(单一真相源):驱动 schemastery 校验、Web 面板动态参数控件
+ * 与 `config --template` 文档三处。键与 provider 顶层字段同名,槽位缺省回退顶层。
+ */
+export const SILICONFLOW_TUNABLE_PARAMS: readonly TunableParam[] = [
+  { key: 'speed', label: '语速', min: 0.25, max: 4, step: 0.01 },
+  { key: 'gain', label: '音量增益', min: -10, max: 10, step: 0.1 },
+]
 
 /** siliconflow provider 的完整配置模板(对齐 design.md §4.1)。 */
 export const SILICONFLOW_CONFIG_TEMPLATE: ConfigTemplate = {
@@ -64,11 +73,11 @@ export const SILICONFLOW_CONFIG_TEMPLATE: ConfigTemplate = {
     },
     voices: {
       type: 'object', required: false, default: null,
-      description: '各语言类别音色覆盖 { zh, en, mixed },缺省回退 voice_type;mixed 先回退 zh 再回退 voice_type',
+      description: '各语言类别槽位 { zh, en, mixed },每槽 { voice_type, speed?, gain? };缺省回退 voice_type,槽位参数缺省回退 provider 顶层字段',
     },
     voice_profiles: {
       type: 'object', required: false, default: null,
-      description: 'per-voice 音色映射 { <voice id>: { zh, en, mixed } },命中当前 dsh-voice 的 voice id 时取代 voices',
+      description: 'per-voice 音色映射 { <voice id>: { zh, en, mixed } },槽位形状同 voices;命中当前 dsh-voice 的 voice id 时取代 voices',
     },
   },
   credentials: { apiKeyRef: DEFAULT_SILICONFLOW_API_KEY_REF },

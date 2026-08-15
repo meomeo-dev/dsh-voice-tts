@@ -82,17 +82,51 @@ export type SentenceLang = 'zh' | 'en' | 'mixed'
 /** bilingual 播报模式:`both` 全读、`english_only` 只读英文(含混合)、`chinese_only` 只读中文(含混合)。 */
 export type BilingualMode = 'both' | 'english_only' | 'chinese_only'
 
-/** 各语言类别的音色覆盖(缺省回退 `voice_type`)。 */
-export interface VoiceTtsVoices {
-  /** 中文句音色。 */
-  readonly zh?: string
-  /** 英文句音色。 */
-  readonly en?: string
-  /** 中英混写句音色;缺省先回退 `zh` 再回退 `voice_type`。 */
-  readonly mixed?: string
+/** 一个可调合成参数的元数据(驱动 schemastery 校验、Web 面板控件与 `config --template` 文档三处)。 */
+export interface TunableParam {
+  /** 参数键(与 provider 顶层同名字段,如 `loudness_rate` / `speed`)。 */
+  readonly key: string
+  /** 展示名(中文)。 */
+  readonly label: string
+  /** 最小值。 */
+  readonly min: number
+  /** 最大值。 */
+  readonly max: number
+  /** 步进。 */
+  readonly step: number
 }
 
-/** per-voice 音色映射:key 是 dsh-voice 的 voice id(如 `steve-jobs`),value 是该口吻的音色覆盖。 */
+/**
+ * 一个语言类别槽位:音色(`voice_type`)+ 可选的可调合成参数。
+ * 参数键随 provider(volcengine 与 siliconflow-cn 各不同);槽位未写的参数
+ * 回退 provider 顶层同名字段(见 design.md §7.5)。
+ */
+export interface VoiceSlot {
+  /** 音色(`voice_type`):volcengine 的 `speaker` / siliconflow 的 `voice`。缺省回退 provider 顶层 `voice_type`。 */
+  readonly voice_type?: string
+  /** volcengine:音调 [-12,12]。 */
+  readonly pitch?: number
+  /** volcengine:语速 [-50,100]。 */
+  readonly speech_rate?: number
+  /** volcengine:音量 [-50,100]。 */
+  readonly loudness_rate?: number
+  /** siliconflow-cn:语速 [0.25,4.0]。 */
+  readonly speed?: number
+  /** siliconflow-cn:音量增益 dB [-10,10]。 */
+  readonly gain?: number
+}
+
+/** 各语言类别的音色槽位(缺省回退 `voice_type`)。 */
+export interface VoiceTtsVoices {
+  /** 中文句槽位。 */
+  readonly zh?: VoiceSlot
+  /** 英文句槽位。 */
+  readonly en?: VoiceSlot
+  /** 中英混写句槽位;缺省先回退 `zh` 再回退 `voice_type`。 */
+  readonly mixed?: VoiceSlot
+}
+
+/** per-voice 音色映射:key 是 dsh-voice 的 voice id(如 `steve-jobs`),value 是该口吻的音色槽位覆盖。 */
 export type VoiceTtsProfiles = Record<string, VoiceTtsVoices>
 
 /** turn-final 的音频交付方式。 */

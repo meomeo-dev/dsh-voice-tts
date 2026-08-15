@@ -145,11 +145,14 @@ export function renderStatus(settings: VoiceTtsSettings, providerIds: readonly s
   ]
   for (const [id, cfg] of Object.entries(settings.providers)) {
     const c = cfg as BilingualVoiceConfig & ApiKeyRefSettings
+    const zh = c.voices.zh?.voice_type || c.voice_type
+    const en = c.voices.en?.voice_type || c.voice_type
+    const mixed = c.voices.mixed?.voice_type || c.voices.zh?.voice_type || c.voice_type
     lines.push(`${id} config:`)
     lines.push(`  apiKeyRef:  ${c.apiKeyRef}`)
     lines.push(`  voice_type: ${c.voice_type}`)
     lines.push(`  bilingual:  ${c.bilingual}`)
-    lines.push(`  voices:     zh=${c.voices.zh ?? c.voice_type}  en=${c.voices.en ?? c.voice_type}  mixed=${c.voices.mixed ?? c.voices.zh ?? c.voice_type}`)
+    lines.push(`  voices:     zh=${zh}  en=${en}  mixed=${mixed}`)
   }
   return lines.join('\n')
 }

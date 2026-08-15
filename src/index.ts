@@ -20,9 +20,9 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { TtsService } from './service.js'
 import { VolcengineTtsProvider } from './provider-volcengine.js'
 import { SiliconflowTtsProvider } from './provider-siliconflow.js'
-import { DEFAULT_VOICE_TYPE, DEFAULT_VOLCENGINE_API_KEY_REF, VOLCENGINE_RESOURCE_IDS } from './volcengine.js'
-import { DEFAULT_SILICONFLOW_API_KEY_REF, DEFAULT_SILICONFLOW_MODEL, DEFAULT_SILICONFLOW_VOICE, SILICONFLOW_MODELS } from './siliconflow.js'
-import type { BilingualVoiceConfig, VoiceTtsSettings } from './types.js'
+import { DEFAULT_VOICE_TYPE, DEFAULT_VOLCENGINE_API_KEY_REF, VOLCENGINE_RESOURCE_IDS, VOLCENGINE_TUNABLE_PARAMS } from './volcengine.js'
+import { DEFAULT_SILICONFLOW_API_KEY_REF, DEFAULT_SILICONFLOW_MODEL, DEFAULT_SILICONFLOW_VOICE, SILICONFLOW_MODELS, SILICONFLOW_TUNABLE_PARAMS } from './siliconflow.js'
+import type { BilingualVoiceConfig, TunableParam, VoiceSlot, VoiceTtsSettings } from './types.js'
 import { concatAudio, planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
 import type { TurnEventLike } from './turn-final.js'
@@ -64,18 +64,27 @@ export const inject = ['commands']
 /** 用户可写设置命名空间。 */
 const NAMESPACE = settingsNamespace('voice-tts')
 
-/** 各语言类别音色覆盖的 schema(provider 通用)。 */
-function voicesSchema() {
+/** 某 provider 的槽位 schema:{ voice_type, ...可调参数(全部可选) }。可调参数来自注册表。 */
+function voiceSlotSchema(params: readonly TunableParam[]): z<VoiceSlot> {
+  const fields: Record<string, unknown> = { voice_type: z.string().default('') }
+  for (const param of params) {
+    fields[param.key] = z.number().step(param.step).min(param.min).max(param.max)
+  }
+  return z.object(fields) as unknown as z<VoiceSlot>
+}
+
+/** 某 provider 的各语言类别槽位 schema(zh/en/mixed 三个槽位)。 */
+function voicesSchema(params: readonly TunableParam[]) {
   return z.object({
-    zh: z.string().default(''),
-    en: z.string().default(''),
-    mixed: z.string().default(''),
+    zh: voiceSlotSchema(params),
+    en: voiceSlotSchema(params),
+    mixed: voiceSlotSchema(params),
   })
 }
 
-/** per-voice 音色映射的 schema(provider 通用)。 */
-function voiceProfilesSchema() {
-  return z.dict(voicesSchema()).default({})
+/** 某 provider 的 per-voice 音色映射 schema(每个 voice id 映射整套 zh/en/mixed 槽位)。 */
+function voiceProfilesSchema(params: readonly TunableParam[]) {
+  return z.dict(voicesSchema(params)).default({})
 }
 
 const BILINGUAL_SCHEMA = z.union(['both', 'english_only', 'chinese_only'] as const).default('both')
@@ -97,8 +106,8 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       loudness_rate: z.number().step(1).min(-50).max(100).default(0),
       pitch: z.number().step(1).min(-12).max(12).default(0),
       bilingual: BILINGUAL_SCHEMA,
-      voices: voicesSchema(),
-      voice_profiles: voiceProfilesSchema(),
+      voices: voicesSchema(VOLCENGINE_TUNABLE_PARAMS),
+      voice_profiles: voiceProfilesSchema(VOLCENGINE_TUNABLE_PARAMS),
     }),
     'siliconflow-cn': z.object({
       apiKeyRef: z.string().default(DEFAULT_SILICONFLOW_API_KEY_REF),
@@ -110,8 +119,8 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       speed: z.number().step(0.01).min(0.25).max(4).default(1),
       gain: z.number().step(0.1).min(-10).max(10).default(0),
       bilingual: BILINGUAL_SCHEMA,
-      voices: voicesSchema(),
-      voice_profiles: voiceProfilesSchema(),
+      voices: voicesSchema(SILICONFLOW_TUNABLE_PARAMS),
+      voice_profiles: voiceProfilesSchema(SILICONFLOW_TUNABLE_PARAMS),
     }),
   }),
 })
@@ -203,19 +212,21 @@ function deliveryView(settings: VoiceTtsSettings): DeliveryView {
 }
 
 /**
- * 组装一次合成请求的 provider 配置:当前 provider 的完整设置 + 覆盖后的音色与格式。
+ * 组装一次合成请求的 provider 配置:当前 provider 的完整设置 + 覆盖后的音色、格式
+ * 与槽位可调参数(槽位未配置的参数不展开,缺省回退 provider 顶层字段)。
  * @param settings - 已解析设置。
  * @param voice - 本分片的音色 id。
  * @param format - 合成格式。
+ * @param params - 本分片的槽位可调参数覆盖(键随 provider)。
  * @returns 传给 `tts.synthesize` 的 `config`。
  */
-function synthConfig(settings: VoiceTtsSettings, voice: string, format: string): Record<string, unknown> {
+function synthConfig(settings: VoiceTtsSettings, voice: string, format: string, params: Record<string, number> = {}): Record<string, unknown> {
   const provider = settings.provider
   if (provider === 'volcengine') {
-    return { ...settings.providers.volcengine, voice_type: voice, format }
+    return { ...settings.providers.volcengine, voice_type: voice, format, ...params }
   }
   if (provider === 'siliconflow-cn') {
-    return { ...settings.providers['siliconflow-cn'], voice_type: voice, format }
+    return { ...settings.providers['siliconflow-cn'], voice_type: voice, format, ...params }
   }
   throw new Error(`unknown TTS provider "${provider}"`)
 }
@@ -246,7 +257,7 @@ async function synthesizeSpeech(
   for (const run of plan.runs) {
     const result = await tts.synthesize(settings.provider, {
       text: run.text,
-      config: synthConfig(settings, run.voice, formatResolved),
+      config: synthConfig(settings, run.voice, formatResolved, run.params),
     })
     parts.push(result.audio)
   }
@@ -273,7 +284,7 @@ async function streamSpeech(tts: TtsService, settings: VoiceTtsSettings, text: s
   for (const run of plan.runs) {
     for await (const chunk of tts.stream(settings.provider, {
       text: run.text,
-      config: synthConfig(settings, run.voice, view.format),
+      config: synthConfig(settings, run.voice, view.format, run.params),
     })) {
       parts.push(chunk.audio)
     }
@@ -502,6 +513,11 @@ function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: () => stri
       listModels(providerId) {
         if (providerId === 'volcengine') return VOLCENGINE_RESOURCE_IDS
         if (providerId === 'siliconflow-cn') return SILICONFLOW_MODELS
+        return []
+      },
+      listParams(providerId) {
+        if (providerId === 'volcengine') return VOLCENGINE_TUNABLE_PARAMS
+        if (providerId === 'siliconflow-cn') return SILICONFLOW_TUNABLE_PARAMS
         return []
       },
       async keyStatus(ref) {

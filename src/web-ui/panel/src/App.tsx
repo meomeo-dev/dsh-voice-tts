@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { readBootstrap, rpc } from './api'
 import type {
-  Bootstrap, KeyStatus, Settings, Status, SiliconflowConfig, Voice, Voices, VolcengineConfig,
+  Bootstrap, KeyStatus, Settings, Status, SiliconflowConfig, TunableParam, Voice, Voices, VoiceSlot, VolcengineConfig,
 } from './api'
 
 const DELIVERY_OPTIONS = ['off', 'file', 'host_play', 'stream'] as const
@@ -39,14 +39,36 @@ const KNOWN_KEY_NAMES = ['VOLCENGINE_TTS_API_KEY', 'SILICONFLOW_API_KEY', 'DEEPS
 /** voice_profiles 的一行(React 编辑态)。 */
 interface ProfileRow {
   id: string
-  zh: string
-  en: string
-  mixed: string
+  zh: VoiceSlot
+  en: VoiceSlot
+  mixed: VoiceSlot
+}
+
+/** 槽位是否有有效内容(音色非空或任一参数已设)。 */
+function isNonEmptySlot(slot: VoiceSlot): boolean {
+  return Object.values(slot).some(value => typeof value === 'string' ? value.length > 0 : true)
+}
+
+/** 读槽位某参数键的数值(非 number 视为未配置)。 */
+function slotParamValue(slot: VoiceSlot, key: string): number | undefined {
+  const value = (slot as Record<string, unknown>)[key]
+  return typeof value === 'number' ? value : undefined
+}
+
+/** 从 provider 顶层配置里取参数注册表的继承默认值(非 number 视为 0)。 */
+function inheritedParams(cfg: unknown, params: readonly TunableParam[]): Record<string, number> {
+  const record = cfg as Record<string, unknown>
+  const out: Record<string, number> = {}
+  for (const param of params) {
+    const value = record[param.key]
+    out[param.key] = typeof value === 'number' ? value : 0
+  }
+  return out
 }
 
 function profilesToRows(profiles: Record<string, Voices>): ProfileRow[] {
   return Object.entries(profiles).map(([id, v]) => ({
-    id, zh: v.zh ?? '', en: v.en ?? '', mixed: v.mixed ?? '',
+    id, zh: v.zh ?? {}, en: v.en ?? {}, mixed: v.mixed ?? {},
   }))
 }
 
@@ -56,9 +78,9 @@ function rowsToProfiles(rows: readonly ProfileRow[]): Record<string, Voices> {
     const id = row.id.trim()
     if (id.length === 0) continue
     out[id] = {
-      ...(row.zh.trim().length > 0 ? { zh: row.zh.trim() } : {}),
-      ...(row.en.trim().length > 0 ? { en: row.en.trim() } : {}),
-      ...(row.mixed.trim().length > 0 ? { mixed: row.mixed.trim() } : {}),
+      ...(isNonEmptySlot(row.zh) ? { zh: row.zh } : {}),
+      ...(isNonEmptySlot(row.en) ? { en: row.en } : {}),
+      ...(isNonEmptySlot(row.mixed) ? { mixed: row.mixed } : {}),
     }
   }
   return out
@@ -189,6 +211,72 @@ function VoicePicker(props: {
   )
 }
 
+/** 单个可调参数的滑块 + 数字输入控件;未配置时显示继承的 provider 顶层默认。 */
+function ParamControl(props: {
+  param: TunableParam
+  value: number | undefined
+  inherited: number
+  onChange: (next: number | undefined) => void
+}): JSX.Element {
+  const { param } = props
+  const display = props.value ?? props.inherited
+  const inherited = props.value === undefined
+  return (
+    <div className="param-control">
+      <div className="param-head">
+        <span className="mono key">{param.key}</span>
+        <span className="desc">{param.label}</span>
+        <span className={`param-state${inherited ? ' inherited' : ''}`}>{inherited ? `继承 ${props.inherited}` : '自定义'}</span>
+        {!inherited && (
+          <button type="button" className="param-clear" onClick={() => props.onChange(undefined)} title="恢复继承 provider 顶层默认">清除</button>
+        )}
+      </div>
+      <div className="param-row">
+        <input type="range" min={param.min} max={param.max} step={param.step} value={display}
+          onChange={e => props.onChange(Number(e.target.value))} />
+        <input type="number" min={param.min} max={param.max} step={param.step}
+          value={props.value ?? ''} placeholder={String(props.inherited)}
+          onChange={e => props.onChange(e.target.value === '' ? undefined : Number(e.target.value))} />
+      </div>
+    </div>
+  )
+}
+
+/** 一个语言类别槽位编辑器:音色选择 + 动态参数控件(参数集随 provider)。 */
+function SlotEditor(props: {
+  slot: VoiceSlot
+  voices: readonly Voice[]
+  params: readonly TunableParam[]
+  inherited: Record<string, number>
+  label: string
+  desc?: string
+  expectedLang?: 'zh' | 'en'
+  onChange: (next: VoiceSlot) => void
+}): JSX.Element {
+  const { slot } = props
+  const setVoice = (voice_type: string): void => props.onChange({ ...slot, voice_type })
+  const setParam = (key: string, value: number | undefined): void => {
+    const next = { ...slot } as Record<string, unknown>
+    if (value === undefined) delete next[key]
+    else next[key] = value
+    props.onChange(next as VoiceSlot)
+  }
+  return (
+    <div className="slot-editor">
+      <VoicePicker voices={props.voices} label={props.label} desc={props.desc} value={slot.voice_type ?? ''} expectedLang={props.expectedLang} onChange={setVoice} />
+      {props.params.length > 0 && (
+        <div className="slot-params">
+          {props.params.map(param => (
+            <ParamControl key={param.key} param={param} value={slotParamValue(slot, param.key)}
+              inherited={props.inherited[param.key] ?? 0}
+              onChange={next => setParam(param.key, next)} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** 状态预览条:当前 voice id + 生效音色。 */
 function StatusStrip(props: { status: Status }): JSX.Element {
   const { status } = props
@@ -277,13 +365,18 @@ function KeyNameField(props: { value: string; onChange: (next: string) => void }
   )
 }
 
-/** 双语共享字段(voice_type / bilingual / voices / voice_profiles)。 */
+/** 双语共享字段(voice_type / bilingual / voices)。每个语言槽位含音色 + 可调参数。 */
 function BilingualFields(props: {
   cfg: { voice_type: string; bilingual: string; voices: Voices }
   voices: readonly Voice[]
+  params: readonly TunableParam[]
+  inherited: Record<string, number>
   onChange: (patch: { voice_type?: string; bilingual?: 'both' | 'english_only' | 'chinese_only'; voices?: Voices }) => void
 }): JSX.Element {
   const { cfg } = props
+  const setSlot = (lang: 'zh' | 'en' | 'mixed', slot: VoiceSlot): void => {
+    props.onChange({ voices: { ...cfg.voices, [lang]: slot } })
+  }
   return (
     <>
       <div className="field-row">
@@ -295,10 +388,10 @@ function BilingualFields(props: {
           </select>
         </label>
       </div>
-      <div className="field-row">
-        <VoicePicker voices={props.voices} label="voices.zh" desc="中文音色" expectedLang="zh" value={cfg.voices.zh ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, zh: next } })} />
-        <VoicePicker voices={props.voices} label="voices.en" desc="英文音色" expectedLang="en" value={cfg.voices.en ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, en: next } })} />
-        <VoicePicker voices={props.voices} label="voices.mixed" desc="混合音色" value={cfg.voices.mixed ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, mixed: next } })} />
+      <div className="voice-slots">
+        <SlotEditor slot={cfg.voices.zh ?? {}} voices={props.voices} params={props.params} inherited={props.inherited} label="voices.zh" desc="中文槽位" expectedLang="zh" onChange={slot => setSlot('zh', slot)} />
+        <SlotEditor slot={cfg.voices.en ?? {}} voices={props.voices} params={props.params} inherited={props.inherited} label="voices.en" desc="英文槽位" expectedLang="en" onChange={slot => setSlot('en', slot)} />
+        <SlotEditor slot={cfg.voices.mixed ?? {}} voices={props.voices} params={props.params} inherited={props.inherited} label="voices.mixed" desc="混合槽位" onChange={slot => setSlot('mixed', slot)} />
       </div>
     </>
   )
@@ -308,6 +401,8 @@ function BilingualFields(props: {
 function ProfilesEditor(props: {
   profiles: Record<string, Voices>
   voices: readonly Voice[]
+  params: readonly TunableParam[]
+  inherited: Record<string, number>
   onChange: (next: Record<string, Voices>) => void
 }): JSX.Element {
   // 本地编辑态:允许存在「空 id 行」供用户填写;提交时才把非空 id 行折叠成 profiles。
@@ -317,20 +412,27 @@ function ProfilesEditor(props: {
     setRows(next)
     props.onChange(rowsToProfiles(next))
   }
+  const setSlot = (index: number, lang: 'zh' | 'en' | 'mixed', slot: VoiceSlot): void => {
+    update(rows.map((r, i) => i === index ? { ...r, [lang]: slot } : r))
+  }
   return (
     <div className="profiles">
       <div className="section-title">per-voice 音色映射 (voice_profiles)</div>
       {rows.map((row, index) => (
         <div className="profile-row" key={index}>
-          <input type="text" className="profile-id" placeholder="voice id (如 steve-jobs)" value={row.id}
-            onChange={e => update(rows.map((r, i) => i === index ? { ...r, id: e.target.value } : r))} />
-          <VoicePicker voices={props.voices} label="zh" expectedLang="zh" value={row.zh} onChange={next => update(rows.map((r, i) => i === index ? { ...r, zh: next } : r))} />
-          <VoicePicker voices={props.voices} label="en" expectedLang="en" value={row.en} onChange={next => update(rows.map((r, i) => i === index ? { ...r, en: next } : r))} />
-          <VoicePicker voices={props.voices} label="mixed" value={row.mixed} onChange={next => update(rows.map((r, i) => i === index ? { ...r, mixed: next } : r))} />
-          <button type="button" className="refresh danger" onClick={() => update(rows.filter((_, i) => i !== index))}>删除</button>
+          <div className="profile-head">
+            <input type="text" className="profile-id" placeholder="voice id (如 steve-jobs)" value={row.id}
+              onChange={e => update(rows.map((r, i) => i === index ? { ...r, id: e.target.value } : r))} />
+            <button type="button" className="refresh danger" onClick={() => update(rows.filter((_, i) => i !== index))}>删除</button>
+          </div>
+          <div className="voice-slots">
+            <SlotEditor slot={row.zh} voices={props.voices} params={props.params} inherited={props.inherited} label="zh" expectedLang="zh" onChange={slot => setSlot(index, 'zh', slot)} />
+            <SlotEditor slot={row.en} voices={props.voices} params={props.params} inherited={props.inherited} label="en" expectedLang="en" onChange={slot => setSlot(index, 'en', slot)} />
+            <SlotEditor slot={row.mixed} voices={props.voices} params={props.params} inherited={props.inherited} label="mixed" onChange={slot => setSlot(index, 'mixed', slot)} />
+          </div>
         </div>
       ))}
-      <button type="button" className="refresh" onClick={() => update([...rows, { id: '', zh: '', en: '', mixed: '' }])}>+ 添加映射</button>
+      <button type="button" className="refresh" onClick={() => update([...rows, { id: '', zh: {}, en: {}, mixed: {} }])}>+ 添加映射</button>
     </div>
   )
 }
@@ -358,7 +460,7 @@ function SaveBar(props: { dirty: number; onSave: () => void }): JSX.Element {
 }
 
 /** volcengine provider 卡片。 */
-function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; voices: readonly Voice[]; dirty: number; onChange: (next: VolcengineConfig) => void; onSave: () => void }): JSX.Element {
+function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; voices: readonly Voice[]; params: readonly TunableParam[]; dirty: number; onChange: (next: VolcengineConfig) => void; onSave: () => void }): JSX.Element {
   const { cfg } = props
   const set = (patch: Partial<VolcengineConfig>): void => props.onChange({ ...cfg, ...patch })
   // 联动:seed-tts-2.0 有 230 个预置音色;seed-icl-2.0(复刻)无预置音色列表。
@@ -373,7 +475,7 @@ function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; vo
       <div className="section-title">volcengine (seed-tts-2.0)</div>
       <KeyNameField value={cfg.apiKeyRef} onChange={next => set({ apiKeyRef: next })} />
       <CredentialSection bootstrap={props.bootstrap} keyRef={cfg.apiKeyRef} />
-      <BilingualFields cfg={cfg} voices={voices} onChange={patch => set(patch)} />
+      <BilingualFields cfg={cfg} voices={voices} params={props.params} inherited={inheritedParams(cfg, props.params)} onChange={patch => set(patch)} />
       <div className="field-row">
         <label className="field">
           <span className="field-head"><span className="mono key">resource_id</span><span className="desc">模型版本</span></span>
@@ -410,14 +512,14 @@ function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; vo
         <label className="field"><span className="field-head"><span className="mono key">pitch</span><span className="desc">[-12,12] 音调</span></span>
           <input type="number" min={-12} max={12} value={cfg.pitch} onChange={e => set({ pitch: Number(e.target.value) || 0 })} /></label>
       </div>
-      <ProfilesEditor profiles={cfg.voice_profiles} voices={voices} onChange={next => set({ voice_profiles: next })} />
+      <ProfilesEditor profiles={cfg.voice_profiles} voices={voices} params={props.params} inherited={inheritedParams(cfg, props.params)} onChange={next => set({ voice_profiles: next })} />
       <SaveBar dirty={props.dirty} onSave={props.onSave} />
     </div>
   )
 }
 
 /** siliconflow provider 卡片。 */
-function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; voices: readonly Voice[]; models: readonly string[]; dirty: number; onChange: (next: SiliconflowConfig) => void; onSave: () => void }): JSX.Element {
+function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; voices: readonly Voice[]; models: readonly string[]; params: readonly TunableParam[]; dirty: number; onChange: (next: SiliconflowConfig) => void; onSave: () => void }): JSX.Element {
   const { cfg } = props
   const set = (patch: Partial<SiliconflowConfig>): void => props.onChange({ ...cfg, ...patch })
   // 联动:voice_type 是「模型:音色名」前缀形式,按当前 model 过滤。
@@ -431,7 +533,7 @@ function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; 
       <div className="section-title">siliconflow-cn (CosyVoice2 / MOSS-TTSD)</div>
       <KeyNameField value={cfg.apiKeyRef} onChange={next => set({ apiKeyRef: next })} />
       <CredentialSection bootstrap={props.bootstrap} keyRef={cfg.apiKeyRef} />
-      <BilingualFields cfg={cfg} voices={voices} onChange={patch => set(patch)} />
+      <BilingualFields cfg={cfg} voices={voices} params={props.params} inherited={inheritedParams(cfg, props.params)} onChange={patch => set(patch)} />
       <div className="field-row">
         <label className="field">
           <span className="field-head"><span className="mono key">model</span><span className="desc">TTS 模型(联动下方音色)</span></span>
@@ -460,7 +562,7 @@ function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; 
         <label className="field"><span className="field-head"><span className="mono key">gain</span><span className="desc">[-10,10] dB 增益</span></span>
           <input type="number" min={-10} max={10} step={0.1} value={cfg.gain} onChange={e => set({ gain: Number(e.target.value) || 0 })} /></label>
       </div>
-      <ProfilesEditor profiles={cfg.voice_profiles} voices={voices} onChange={next => set({ voice_profiles: next })} />
+      <ProfilesEditor profiles={cfg.voice_profiles} voices={voices} params={props.params} inherited={inheritedParams(cfg, props.params)} onChange={next => set({ voice_profiles: next })} />
       <SaveBar dirty={props.dirty} onSave={props.onSave} />
     </div>
   )
@@ -474,6 +576,7 @@ export function App(): JSX.Element {
   const [status, setStatus] = useState<Status | null>(null)
   const [voices, setVoices] = useState<Record<string, Voice[]>>({ volcengine: [], 'siliconflow-cn': [] })
   const [models, setModels] = useState<Record<string, string[]>>({ volcengine: [], 'siliconflow-cn': [] })
+  const [params, setParams] = useState<Record<string, TunableParam[]>>({ volcengine: [], 'siliconflow-cn': [] })
   const [error, setError] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
 
@@ -482,14 +585,15 @@ export function App(): JSX.Element {
     Promise.all([
       rpc<{ config: Settings }>(bootstrap, 'config-get'),
       rpc<{ status: Status }>(bootstrap, 'status-get'),
-      rpc<{ voices: Voice[]; models: string[] }>(bootstrap, 'voices-list', { provider: 'volcengine' }),
-      rpc<{ voices: Voice[]; models: string[] }>(bootstrap, 'voices-list', { provider: 'siliconflow-cn' }),
+      rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'volcengine' }),
+      rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'siliconflow-cn' }),
     ]).then(([c, s, v1, v2]) => {
       setConfig(c.config)
       setSaved(c.config)
       setStatus(s.status)
       setVoices({ volcengine: v1.voices, 'siliconflow-cn': v2.voices })
       setModels({ volcengine: v1.models, 'siliconflow-cn': v2.models })
+      setParams({ volcengine: v1.params, 'siliconflow-cn': v2.params })
     }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false))
   }, [bootstrap])
@@ -562,10 +666,10 @@ export function App(): JSX.Element {
           </div>
           <SaveBar dirty={globalDirty} onSave={() => void saveRegion('global')} />
         </div>
-        <VolcengineCard bootstrap={bootstrap} cfg={config.providers.volcengine} voices={voices.volcengine} dirty={volDirty}
+        <VolcengineCard bootstrap={bootstrap} cfg={config.providers.volcengine} voices={voices.volcengine} params={params.volcengine} dirty={volDirty}
           onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, volcengine: next } })}
           onSave={() => void saveRegion('volcengine')} />
-        <SiliconflowCard bootstrap={bootstrap} cfg={config.providers['siliconflow-cn']} voices={voices['siliconflow-cn']} models={models['siliconflow-cn']} dirty={sfDirty}
+        <SiliconflowCard bootstrap={bootstrap} cfg={config.providers['siliconflow-cn']} voices={voices['siliconflow-cn']} models={models['siliconflow-cn']} params={params['siliconflow-cn']} dirty={sfDirty}
           onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, 'siliconflow-cn': next } })}
           onSave={() => void saveRegion('siliconflow-cn')} />
         <datalist id="voice-tts-key-names">

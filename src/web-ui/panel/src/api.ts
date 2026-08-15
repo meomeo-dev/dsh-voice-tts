@@ -24,11 +24,30 @@ export function readBootstrap(): Bootstrap | undefined {
   }
 }
 
-/** 各语言类别音色覆盖(镜像 host 侧 VoiceTtsVoices)。 */
+/** 槽位可调参数元数据(镜像 host 侧 TunableParam)。 */
+export interface TunableParam {
+  readonly key: string
+  readonly label: string
+  readonly min: number
+  readonly max: number
+  readonly step: number
+}
+
+/** 一个语言类别槽位(镜像 host 侧 VoiceSlot,编辑态可变)。 */
+export interface VoiceSlot {
+  voice_type?: string
+  pitch?: number
+  speech_rate?: number
+  loudness_rate?: number
+  speed?: number
+  gain?: number
+}
+
+/** 各语言类别槽位(镜像 host 侧 VoiceTtsVoices)。 */
 export interface Voices {
-  readonly zh?: string
-  readonly en?: string
-  readonly mixed?: string
+  zh?: VoiceSlot
+  en?: VoiceSlot
+  mixed?: VoiceSlot
 }
 
 /** provider 无关的双语 + 音色映射字段。 */

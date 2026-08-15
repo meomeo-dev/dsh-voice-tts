@@ -65,15 +65,24 @@ voice-tts:
       loudness_rate: 0                        # audio_params.loudness_rate [-50,100]
       pitch: 0                                # post_process.pitch [-12,12]
       bilingual: both                         # 双语播报模式:both / english_only / chinese_only
-      voices:                                 # 各语言类别音色覆盖(缺省回退 voice_type)
-        zh: zh_female_vv_uranus_bigtts
-        en: en_male_alex_uranus_bigtts
-        mixed: zh_female_vv_uranus_bigtts
+      voices:                                 # 各语言类别槽位(缺省回退 voice_type)
+        zh:
+          voice_type: zh_female_vv_uranus_bigtts
+        en:
+          voice_type: en_male_alex_uranus_bigtts
+          loudness_rate: 40                   # 可选:为英文音色单独加大音量(缺省回退 provider 顶层 loudness_rate)
+        mixed:
+          voice_type: zh_female_vv_uranus_bigtts
       voice_profiles:                         # 按 dsh-voice id 映射的整套 voices(缺省回退 voices)
         steve-jobs:
-          zh: zh_male_m191_uranus_bigtts
-          en: en_male_david_uranus_bigtts
-          mixed: zh_male_m191_uranus_bigtts
+          zh:
+            voice_type: zh_male_m191_uranus_bigtts
+          en:
+            voice_type: en_male_david_uranus_bigtts
+            speech_rate: 10                   # 可选:语速覆盖(缺省回退 provider 顶层 speech_rate)
+            loudness_rate: 30                 # 可选:音量覆盖
+          mixed:
+            voice_type: zh_male_m191_uranus_bigtts
     siliconflow-cn:
       apiKeyRef: SILICONFLOW_API_KEY           # KEY NAME(凭证引用名)
       voice_type: FunAudioLLM/CosyVoice2-0.5B:alex  # voice id(模型前缀形式)
@@ -103,8 +112,8 @@ voice-tts:
 | `loudness_rate` | `audio_params.loudness_rate` | `0` | `[-50,100]` | 100=2 倍音量 |
 | `pitch` | `post_process.pitch` | `0` | `[-12,12]` | 音调 |
 | `bilingual` | —(本地策略) | `both` | `both` / `english_only` / `chinese_only` | 双语播报过滤(见 §7) |
-| `voices` | —(本地策略) | `{}` | `{ zh?, en?, mixed? }` | 各语言类别音色覆盖;缺省回退 `voice_type`,mixed 先回退 zh 再回退 voice_type |
-| `voice_profiles` | —(本地策略) | `{}` | `{ <voice-id>: { zh?, en?, mixed? } }` | 按 dsh-voice id 映射的整套 voices;命中则整体覆盖 `voices`,缺省回退 `voices`(见 §7.4) |
+| `voices` | —(本地策略) | `{}` | `{ zh?, en?, mixed? }`,每槽 `{ voice_type?, pitch?, speech_rate?, loudness_rate? }` | 各语言类别槽位;缺省回退 `voice_type`,mixed 先回退 zh 再回退 voice_type;槽位可调参数缺省回退 provider 顶层对应字段(见 §7.5) |
+| `voice_profiles` | —(本地策略) | `{}` | `{ <voice-id>: { zh?, en?, mixed? } }`,槽位同上 | 按 dsh-voice id 映射的整套 voices;命中则整体覆盖 `voices`,缺省回退 `voices`(见 §7.4) |
 
 **非目标(首版不进 settings)**:`additions` 里的 `silence_duration`/`disable_markdown_filter`/`disable_emoji_filter`/`explicit_language`/`explicit_dialect`、`context_texts`(语音指令)、`section_id`、`tone_fidelity`、字幕、缓存——这些是进阶能力,后续 provider 扩展时逐个加进 settings,首版只做「文本→音频」。
 
@@ -168,8 +177,8 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`)。每个 provider �
     "loudness_rate":{ "type": "number", "required": false, "default": 0,                           "description": "音量 [-50,100],100=2倍音量" },
     "pitch":        { "type": "number", "required": false, "default": 0,                           "description": "音调 [-12,12]" },
     "bilingual":    { "type": "string", "required": false, "default": "both", "enum": ["both","english_only","chinese_only"], "description": "双语播报模式;混合句永远整句读" },
-    "voices":       { "type": "object", "required": false, "default": null,                        "description": "各语言类别音色覆盖 { zh, en, mixed },缺省回退 voice_type" },
-    "voice_profiles": { "type": "object", "required": false, "default": null,                      "description": "按 dsh-voice id 映射的整套 voices { <voice-id>: { zh, en, mixed } },命中整体覆盖 voices" }
+    "voices":       { "type": "object", "required": false, "default": null,                        "description": "各语言类别槽位 { zh, en, mixed },每槽 { voice_type, pitch?, speech_rate?, loudness_rate? };缺省回退 voice_type,槽位参数缺省回退 provider 顶层字段" },
+    "voice_profiles": { "type": "object", "required": false, "default": null,                      "description": "按 dsh-voice id 映射的整套 voices { <voice-id>: { zh, en, mixed } },槽位形状同 voices;命中整体覆盖 voices" }
   },
   "credentials": {
     "apiKeyRef": "VOLCENGINE_TTS_API_KEY"
@@ -245,20 +254,38 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`)。每个 provider �
    - `english_only` — 读英文句 + 混合句
    - `chinese_only` — 读中文句 + 混合句
    - **混合句永远整句读,不做过滤**——它无法干净地归入单一语言,故默认完整阅读。
-3. **多音色(`voices`)**:每个语言类别可配独立音色,缺省回退 `voice_type`:
-   - 中文句 → `voices.zh ?? voice_type`
-   - 英文句 → `voices.en ?? voice_type`
-   - 混合句 → `voices.mixed ?? voices.zh ?? voice_type`
-4. **合成**:相邻同音色的句子合并为一次 API 调用(减少往返),按序拼接为最终音频。
+3. **多音色(`voices`)**:每个语言类别是一个**槽位**(slot),含音色(`voice_type`)+ 可选的可调参数,缺省回退 `voice_type`:
+   - 中文句 → `voices.zh`(空则 `voice_type`)
+   - 英文句 → `voices.en`(空则 `voice_type`)
+   - 混合句 → `voices.mixed`(空则回退 `voices.zh` 再回退 `voice_type`)
+4. **合成**:相邻**同音色且同参数**的句子合并为一次 API 调用(减少往返),按序拼接为最终音频。
 
 ### 按 dsh-voice id 映射整套 voices(`voice_profiles`)
 
 `voices` 是「全局默认」的三语言音色;`voice_profiles` 是按 dsh-voice 当前口吻 id 覆盖的整套 voices,让「乔布斯」用男声、「少女」用女声等口吻与音色联动:
 
 1. **命中来源**:插件软读 dsh-voice 的当前 voice id(`settings.get(settingsNamespace('voice')).tone`,如 `steve-jobs`)。dsh-voice 只把口吻存在 settings 命名空间 `voice` 的 `tone` 字段、不暴露服务,故跨 bundle 用 settings 软读(对齐 dsh-voice 自身 `ctx.get('settings').get(...)` 的做法)。
-2. **解析规则**:`effectiveVoices(config, voiceId)` 返回 `config.voice_profiles[voiceId] ?? config.voices`——命中 profile 则**整体替换** voices(profile 未填的类别仍回退 `voice_type`),未命中(voiceId 为 `undefined`、未映射)则回退全局 `voices`。
+2. **解析规则**:`effectiveVoices(config, voiceId)` 返回 `config.voice_profiles[voiceId] ?? config.voices`——命中 profile 则**整体替换** voices(profile 未填的类别仍回退 `voice_type`),未命中(voiceId 为 `undefined`、未映射)则回退全局 `voices`。每个槽位是对象 `{ voice_type, ...可调参数 }`,命中即同时覆盖音色与参数。
 3. **接线**:`/dsh-voice-tts speak` 与 `turn/end` 自动合成都先 `resolveVoiceId()` 拿到当前口吻 id,再把 `voiceId` 透传给 `planBilingualSpeech(text, config, voiceId)`,后续分句/过滤/音色分配/合并/拼接逻辑不变。
 4. **软读语义**:无 dsh-voice(settings 未挂载或 `voice` 命名空间未注册)时 `voiceId` 为 `undefined`,`voice_profiles` 自动跳过,退回全局 `voices`——不影响无 dsh-voice 的纯 TTS 使用。
+
+### 槽位可调参数(per-slot tunable params)
+
+每个语言类别槽位除了 `voice_type`,还可携带**可调合成参数**,用于补偿不同音色之间的响度/语速差异(如英文音色偏小、中文偏大):
+
+```yaml
+voices:
+  en:
+    voice_type: en_male_alex_uranus_bigtts
+    loudness_rate: 40     # volcengine:为英文音色单独 +40 音量
+```
+
+- **参数集随 provider**(权威见各 provider 的 `TUNABLE_PARAMS` 注册表):
+  - volcengine:`pitch`(音调 [-12,12])、`speech_rate`(语速 [-50,100])、`loudness_rate`(音量 [-50,100])。
+  - siliconflow-cn:`speed`(语速 [0.25,4.0])、`gain`(音量增益 dB [-10,10])。
+- **缺省继承**:槽位里未写的参数**回退 provider 顶层对应字段**(如 `volcengine.loudness_rate`),并非固定为 0——即「未配置用 provider 范围内默认值」。合成时把槽位参数 `...` 展开覆盖 provider 配置的同名键。
+- **合并粒度**:双语规划把相邻**同音色且同参数**的句子合并为一次 API 调用;同音色但参数不同则拆开两次调用。
+- **三处同步**:参数注册表是单一真相源(single source of truth),驱动 schemastery 校验、Web 面板动态控件(volcengine 渲染 3 个参数、siliconflow 渲染 2 个)、`config --template` 文档三处,保证不漂移。
 
 ### 触发面
 
@@ -328,3 +355,5 @@ siliconflow 音色:CosyVoice2-0.5B 与 MOSS-TTSD-v0.5 共用同一套 8 个系�
 11. `delivery≠off` 时,`turn/end` 触发:提取该 turn 最终可见 assistant 文本(跳过 tool-call-only 消息)→ 双语管线合成 → 按 delivery 交付;`delivery=off` 时不处理。
 12. `/dsh-voice-tts-key set|unset|status` 收敛到 credentials seam:`set` 写 `.credentials.yaml`、`unset` 删、`status` 只报 configured/source/writable 不回显值;`recordInput:false` 使 value 不进 session log。
 13. `voice_profiles` 按 dsh-voice id 映射:软读 `voice.tone` 命中 profile 则整体替换 `voices`,未命中回退全局 `voices`;无 dsh-voice 时映射自动跳过。
+14. 槽位可调参数:某语言槽位配置了 `loudness_rate` 等参数时,该槽位的合成请求携带该覆盖值;未配置时回退 provider 顶层对应字段;相邻「同音色但不同参数」的句子拆为多次 API 调用(不合并)。
+15. 参数注册表随 provider 生效:`config --template` 的 `voices`/`voice_profiles` 描述与 Web 面板动态参数控件均来自同一 `TUNABLE_PARAMS`(volcengine 3 个、siliconflow-cn 2 个),不硬编码在面板组件里。

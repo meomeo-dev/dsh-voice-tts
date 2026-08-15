@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { resolvedVoice } from './bilingual.js'
-import type { BilingualVoiceConfig, TtsVoice, VoiceTtsSettings } from './types.js'
+import type { BilingualVoiceConfig, TtsVoice, TunableParam, VoiceTtsSettings } from './types.js'
 
 // ---- token ----
 
@@ -228,6 +228,8 @@ export interface PanelDeps {
   listVoices(providerId: string): readonly TtsVoice[]
   /** 某 provider 的模型/资源 id 列表(面板下拉联动音色用)。 */
   listModels(providerId: string): readonly string[]
+  /** 某 provider 的槽位可调参数注册表(面板动态参数控件用)。 */
+  listParams(providerId: string): readonly TunableParam[]
   /** 某凭证引用(KEY NAME)的只读状态。 */
   keyStatus(ref: string): Promise<PanelKeyStatus>
   /** 写某凭证引用(KEY NAME)的值(走 credentials seam)。 */
@@ -355,7 +357,7 @@ export async function handlePanelRpc(
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')
         const parsed = parsePayload(PROVIDER_PAYLOAD, payload)
         if (!parsed.ok) return panelError('bad-request', parsed.message)
-        return { ok: true, value: { voices: deps.listVoices(parsed.value.provider), models: deps.listModels(parsed.value.provider) } }
+        return { ok: true, value: { voices: deps.listVoices(parsed.value.provider), models: deps.listModels(parsed.value.provider), params: deps.listParams(parsed.value.provider) } }
       }
       case 'key-status': {
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')

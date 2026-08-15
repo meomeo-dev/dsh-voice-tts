@@ -82,36 +82,41 @@ describe('voiceFor', () => {
   })
 
   it('uses per-language voices and mixed falls back to zh then voice_type', () => {
-    const cfg = { ...base, voices: { zh: 'zh_voice', en: 'en_voice' } }
+    const cfg = { ...base, voices: { zh: { voice_type: 'zh_voice' }, en: { voice_type: 'en_voice' } } }
     expect(voiceFor('zh', cfg)).toBe('zh_voice')
     expect(voiceFor('en', cfg)).toBe('en_voice')
     expect(voiceFor('mixed', cfg)).toBe('zh_voice')
 
-    const mixedOnly = { ...base, voices: { mixed: 'mixed_voice' } }
+    const mixedOnly = { ...base, voices: { mixed: { voice_type: 'mixed_voice' } } }
     expect(voiceFor('mixed', mixedOnly)).toBe('mixed_voice')
+  })
+
+  it('falls back to voice_type when a slot has an empty voice_type', () => {
+    const cfg = { ...base, voices: { zh: { voice_type: '' } } }
+    expect(voiceFor('zh', cfg)).toBe('zh_default')
   })
 })
 
 describe('effectiveVoices / per-voice profiles', () => {
   it('falls back to default voices when voiceId is undefined', () => {
-    const cfg = { ...base, voices: { zh: 'zh_default' } }
-    expect(effectiveVoices(cfg, undefined)).toEqual({ zh: 'zh_default' })
+    const cfg = { ...base, voices: { zh: { voice_type: 'zh_default' } } }
+    expect(effectiveVoices(cfg, undefined)).toEqual({ zh: { voice_type: 'zh_default' } })
   })
 
   it('returns the profile when voiceId matches, else falls back', () => {
     const cfg = {
       ...base,
-      voices: { zh: 'zh_default' },
-      voice_profiles: { 'steve-jobs': { zh: 'zh_male', en: 'en_male' } },
+      voices: { zh: { voice_type: 'zh_default' } },
+      voice_profiles: { 'steve-jobs': { zh: { voice_type: 'zh_male' }, en: { voice_type: 'en_male' } } },
     }
-    expect(effectiveVoices(cfg, 'steve-jobs')).toEqual({ zh: 'zh_male', en: 'en_male' })
-    expect(effectiveVoices(cfg, 'unknown-id')).toEqual({ zh: 'zh_default' })
+    expect(effectiveVoices(cfg, 'steve-jobs')).toEqual({ zh: { voice_type: 'zh_male' }, en: { voice_type: 'en_male' } })
+    expect(effectiveVoices(cfg, 'unknown-id')).toEqual({ zh: { voice_type: 'zh_default' } })
   })
 
   it('plan uses the matched profile voices', () => {
     const cfg = {
       ...base,
-      voice_profiles: { 'steve-jobs': { zh: 'zh_male', en: 'en_male' } },
+      voice_profiles: { 'steve-jobs': { zh: { voice_type: 'zh_male' }, en: { voice_type: 'en_male' } } },
     }
     const plan = planBilingualSpeech('中文句。English sentence.', cfg, 'steve-jobs')
     expect(plan.runs.map(r => r.voice)).toEqual(['zh_male', 'en_male'])
@@ -120,7 +125,7 @@ describe('effectiveVoices / per-voice profiles', () => {
 
 describe('planBilingualSpeech', () => {
   it('groups consecutive same-voice sentences and reports stats', () => {
-    const cfg = { ...base, voices: { zh: 'zh_v', en: 'en_v' }, bilingual: 'both' as const }
+    const cfg = { ...base, voices: { zh: { voice_type: 'zh_v' }, en: { voice_type: 'en_v' } }, bilingual: 'both' as const }
     const plan = planBilingualSpeech('中文一句。中文二句。English one. English two. 混合 mixed 句。', cfg)
     expect(plan.total).toBe(5)
     expect(plan.spoken).toBe(5)
@@ -142,6 +147,30 @@ describe('planBilingualSpeech', () => {
     const plan = planBilingualSpeech('纯中文一句。', cfg)
     expect(plan.runs).toHaveLength(0)
     expect(plan.spoken).toBe(0)
+  })
+
+  it('carries slot tunable params onto the run', () => {
+    const cfg = {
+      ...base,
+      voices: { en: { voice_type: 'en_v', loudness_rate: 40, speech_rate: 10 } },
+    }
+    const plan = planBilingualSpeech('English one. English two.', cfg)
+    expect(plan.runs).toHaveLength(1)
+    expect(plan.runs[0]!.params).toEqual({ loudness_rate: 40, speech_rate: 10 })
+  })
+
+  it('does not merge same-voice sentences with different params', () => {
+    const cfg = {
+      ...base,
+      voices: {
+        zh: { voice_type: 'zh_v', loudness_rate: 0 },
+        en: { voice_type: 'zh_v', loudness_rate: 40 },
+      },
+    }
+    // zh 与 en 两个槽位都是同一音色 voice_type=zh_v,但 loudness_rate 不同,须拆两次。
+    const plan = planBilingualSpeech('中文句。English sentence.', cfg)
+    expect(plan.runs.map(r => r.voice)).toEqual(['zh_v', 'zh_v'])
+    expect(plan.runs.map(r => r.params)).toEqual([{ loudness_rate: 0 }, { loudness_rate: 40 }])
   })
 })
 

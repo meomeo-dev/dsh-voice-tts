@@ -8,7 +8,7 @@
  * @module dsh-voice-tts/bilingual
  */
 
-import type { BilingualMode, BilingualVoiceConfig, SentenceLang, VoiceTtsVoices } from './types.js'
+import type { BilingualMode, BilingualVoiceConfig, SentenceLang, VoiceSlot, VoiceTtsVoices } from './types.js'
 
 /** 一句已判定语言的文本。 */
 export interface BilingualSentence {
@@ -16,12 +16,14 @@ export interface BilingualSentence {
   readonly lang: SentenceLang
 }
 
-/** 一段连续同音色的待合成文本(相邻同音色句子已合并)。 */
+/** 一段连续同音色且同参数的待合成文本(相邻同音色同参数句子已合并)。 */
 export interface VoiceRun {
   readonly voice: string
   readonly lang: SentenceLang
   readonly text: string
   readonly count: number
+  /** 该分片携带的槽位可调参数覆盖(仅数值键);合成时展开覆盖 provider 顶层同名字段。 */
+  readonly params: Record<string, number>
 }
 
 /** 双语播报规划结果。 */
@@ -133,13 +135,36 @@ export function filterSentences(
 /**
  * 解析某语言类别应使用的音色(先 per-voice profile,再缺省 voices,最后 voice_type)。
  * @param lang - 语言类别。
- * @param voices - 已解析的音色覆盖(可能来自 voice_profiles 或缺省 voices)。
+ * @param voices - 已解析的音色槽位覆盖(可能来自 voice_profiles 或缺省 voices)。
  * @param fallback - voice_type 兜底。
  */
 function voiceForVoices(lang: SentenceLang, voices: VoiceTtsVoices, fallback: string): string {
-  if (lang === 'zh') return voices.zh || fallback
-  if (lang === 'en') return voices.en || fallback
-  return voices.mixed || voices.zh || fallback
+  if (lang === 'zh') return voices.zh?.voice_type || fallback
+  if (lang === 'en') return voices.en?.voice_type || fallback
+  return voices.mixed?.voice_type || voices.zh?.voice_type || fallback
+}
+
+/**
+ * 提取某槽位携带的可调参数(仅数值键,排除 `voice_type`)。槽位未写的参数回退
+ * provider 顶层字段,故此处只返回显式配置的覆盖值。
+ * @param slot - 语言类别槽位。
+ * @returns 参数覆盖映射(键随 provider,如 `loudness_rate` / `speed`)。
+ */
+function slotParams(slot: VoiceSlot | undefined): Record<string, number> {
+  if (slot === undefined) return {}
+  const params: Record<string, number> = {}
+  for (const [key, value] of Object.entries(slot)) {
+    if (key === 'voice_type') continue
+    if (typeof value === 'number') params[key] = value
+  }
+  return params
+}
+
+/** 比较两个参数覆盖映射是否相等(键序无关,键集一致即相等)。 */
+function paramsEqual(a: Record<string, number>, b: Record<string, number>): boolean {
+  const keys = Object.keys(a)
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every(key => a[key] === b[key])
 }
 
 /**
@@ -177,7 +202,7 @@ export function effectiveVoices(config: BilingualVoiceConfig, voiceId: string | 
   return config.voices
 }
 
-/** 规划双语播报:过滤后按语言分配音色,相邻同音色句子合并为一个分片。 */
+/** 规划双语播报:过滤后按语言分配音色,相邻同音色且同参数的句子合并为一个分片。 */
 export function planBilingualSpeech(
   text: string,
   config: BilingualVoiceConfig,
@@ -191,11 +216,12 @@ export function planBilingualSpeech(
   for (const sentence of selected) {
     byLang[sentence.lang]++
     const voice = voiceForVoices(sentence.lang, voices, config.voice_type)
+    const params = slotParams(voices[sentence.lang])
     const last = runs[runs.length - 1]
-    if (last !== undefined && last.voice === voice) {
-      runs[runs.length - 1] = { voice, lang: sentence.lang, text: `${last.text} ${sentence.text}`, count: last.count + 1 }
+    if (last !== undefined && last.voice === voice && paramsEqual(last.params, params)) {
+      runs[runs.length - 1] = { voice, lang: sentence.lang, text: `${last.text} ${sentence.text}`, count: last.count + 1, params }
     } else {
-      runs.push({ voice, lang: sentence.lang, text: sentence.text, count: 1 })
+      runs.push({ voice, lang: sentence.lang, text: sentence.text, count: 1, params })
     }
   }
   return { runs, total: sentences.length, spoken: selected.length, byLang }

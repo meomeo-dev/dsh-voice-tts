@@ -147,7 +147,7 @@ describe('renderPanelShell', () => {
 describe('describeStatus', () => {
   it('resolves per-language voices through a matched profile', () => {
     const cfg = makeVolcengineConfig({
-      voice_profiles: { 'steve-jobs': { zh: 'zh_male', en: 'en_male', mixed: 'zh_male' } },
+      voice_profiles: { 'steve-jobs': { zh: { voice_type: 'zh_male' }, en: { voice_type: 'en_male' }, mixed: { voice_type: 'zh_male' } } },
     })
     expect(describeStatus(cfg, 'steve-jobs')).toEqual({
       voiceId: 'steve-jobs',
@@ -177,6 +177,7 @@ describe('handlePanelRpc', () => {
       status: () => describeStatus(settings.providers.volcengine, undefined),
       listVoices: () => [voice],
       listModels: () => ['seed-tts-2.0', 'seed-icl-2.0'],
+      listParams: () => [{ key: 'pitch', label: '音调', min: -12, max: 12, step: 1 }],
       keyStatus: async () => ({ configured: true, source: 'file', writable: true }),
       setKey: async () => {},
       unsetKey: async () => {},
@@ -212,13 +213,15 @@ describe('handlePanelRpc', () => {
     expect(result.ok).toBe(false)
   })
 
-  it('voices-list returns the voice catalog + models for a provider', async () => {
+  it('voices-list returns the voice catalog + models + params for a provider', async () => {
     const listVoices = vi.fn(() => [voice])
     const listModels = vi.fn(() => ['seed-tts-2.0', 'seed-icl-2.0'])
-    const result = await handlePanelRpc('voices-list', { acToken: TOKEN, provider: 'volcengine' }, TOKEN, deps({ listVoices, listModels }))
+    const listParams = vi.fn(() => [{ key: 'pitch', label: '音调', min: -12, max: 12, step: 1 }])
+    const result = await handlePanelRpc('voices-list', { acToken: TOKEN, provider: 'volcengine' }, TOKEN, deps({ listVoices, listModels, listParams }))
     expect(listVoices).toHaveBeenCalledWith('volcengine')
     expect(listModels).toHaveBeenCalledWith('volcengine')
-    expect(result).toEqual({ ok: true, value: { voices: [voice], models: ['seed-tts-2.0', 'seed-icl-2.0'] } })
+    expect(listParams).toHaveBeenCalledWith('volcengine')
+    expect(result).toEqual({ ok: true, value: { voices: [voice], models: ['seed-tts-2.0', 'seed-icl-2.0'], params: [{ key: 'pitch', label: '音调', min: -12, max: 12, step: 1 }] } })
   })
 
   it('key-status returns configured/source/writable without a value', async () => {

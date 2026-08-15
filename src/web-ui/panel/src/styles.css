@@ -260,18 +260,94 @@ body {
 }
 
 .profile-row {
-  display: grid;
-  grid-template-columns: 180px 1fr 1fr 1fr auto;
-  gap: 8px;
-  align-items: end;
-  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid var(--border-l1);
   border-radius: 6px;
   background: var(--bg-platform);
 }
 
+.profile-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .profile-id {
-  grid-column: 1;
+  flex: 1;
+  max-width: 260px;
+}
+
+/* 槽位编辑器:音色选择 + 动态参数控件 */
+.slot-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-l1);
+  border-radius: 6px;
+  background: var(--bg-base);
+}
+
+.slot-params {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.param-control {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.param-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.param-state {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--business-primary);
+}
+
+.param-state.inherited {
+  color: var(--label-caption);
+}
+
+.param-clear {
+  border: none;
+  background: none;
+  color: var(--error);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.param-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.param-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.param-row input[type='number'] {
+  width: 64px;
+}
+
+.voice-slots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: start;
 }
 
 /* 表单控件 */

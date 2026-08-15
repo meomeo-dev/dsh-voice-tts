@@ -5,7 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { ConfigTemplate, TtsChunk, TtsResult, VolcengineConfig } from './types.js'
+import type { ConfigTemplate, TtsChunk, TtsResult, TunableParam, VolcengineConfig } from './types.js'
 
 /** 单向流式合成接口。 */
 export const VOLCENGINE_API_URL = 'https://openspeech.bytedance.com/api/v3/tts/unidirectional'
@@ -22,6 +22,16 @@ export const DEFAULT_VOICE_TYPE = 'zh_female_vv_uranus_bigtts'
 
 /** 可选的模型版本(请求头 `X-Api-Resource-Id`),供面板下拉联动音色。 */
 export const VOLCENGINE_RESOURCE_IDS: readonly string[] = ['seed-tts-2.0', 'seed-icl-2.0']
+
+/**
+ * 槽位可调参数注册表(单一真相源):驱动 schemastery 校验、Web 面板动态参数控件
+ * 与 `config --template` 文档三处。键与 provider 顶层字段同名,槽位缺省回退顶层。
+ */
+export const VOLCENGINE_TUNABLE_PARAMS: readonly TunableParam[] = [
+  { key: 'pitch', label: '音调', min: -12, max: 12, step: 1 },
+  { key: 'speech_rate', label: '语速', min: -50, max: 100, step: 1 },
+  { key: 'loudness_rate', label: '音量', min: -50, max: 100, step: 1 },
+]
 
 /** volcengine provider 的完整配置模板(对齐 design.md §4.1)。 */
 export const VOLCENGINE_CONFIG_TEMPLATE: ConfigTemplate = {
@@ -69,11 +79,11 @@ export const VOLCENGINE_CONFIG_TEMPLATE: ConfigTemplate = {
     },
     voices: {
       type: 'object', required: false, default: null,
-      description: '各语言类别音色覆盖 { zh, en, mixed },缺省回退 voice_type;mixed 先回退 zh 再回退 voice_type',
+      description: '各语言类别槽位 { zh, en, mixed },每槽 { voice_type, pitch?, speech_rate?, loudness_rate? };缺省回退 voice_type,槽位参数缺省回退 provider 顶层字段',
     },
     voice_profiles: {
       type: 'object', required: false, default: null,
-      description: 'per-voice 音色映射 { <voice id>: { zh, en, mixed } },命中当前 dsh-voice 的 voice id 时取代 voices',
+      description: 'per-voice 音色映射 { <voice id>: { zh, en, mixed } },槽位形状同 voices;命中当前 dsh-voice 的 voice id 时取代 voices',
     },
   },
   credentials: { apiKeyRef: DEFAULT_VOLCENGINE_API_KEY_REF },
