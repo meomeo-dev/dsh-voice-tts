@@ -21,6 +21,8 @@
   --business-primary-dark: rgb(72, 104, 178);
   --error: rgb(236, 19, 19);
   --success: rgb(34, 197, 94);
+  --warn: rgb(245, 158, 11);
+  --warn-dark: rgb(217, 119, 6);
   --error-bg: rgb(254, 242, 242);
   --success-bg: rgb(230, 250, 237);
   --hover: rgba(38, 49, 72, 0.06);
@@ -308,6 +310,16 @@ button.primary:hover:not(:disabled) {
 button.primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+button.primary.dirty {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+
+button.primary.dirty:hover:not(:disabled) {
+  background: var(--warn-dark);
+  border-color: var(--warn-dark);
 }
 
 button.refresh {

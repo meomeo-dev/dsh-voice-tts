@@ -309,8 +309,30 @@ function ProfilesEditor(props: {
   )
 }
 
+/** 顶层字段级 diff:比较两个对象的顶层 key,返回值不同的 key 数(对象值 JSON 深比较)。 */
+function countDiff(a: object, b: object): number {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+  let n = 0
+  for (const key of keys) {
+    if (JSON.stringify((a as Record<string, unknown>)[key]) !== JSON.stringify((b as Record<string, unknown>)[key])) n++
+  }
+  return n
+}
+
+/** 区域保存条:脏时高亮并显示未保存字段数,干净时禁用。 */
+function SaveBar(props: { dirty: number; onSave: () => void }): JSX.Element {
+  return (
+    <div className="form-actions">
+      <button type="button" className={`primary${props.dirty > 0 ? ' dirty' : ''}`} disabled={props.dirty === 0} onClick={props.onSave}>
+        {props.dirty > 0 ? `保存 (${props.dirty} 处未保存)` : '保存 (Save)'}
+      </button>
+      <span className="desc">{props.dirty > 0 ? '有未保存改动' : '已保存'}</span>
+    </div>
+  )
+}
+
 /** volcengine provider 卡片。 */
-function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; voices: readonly Voice[]; onChange: (next: VolcengineConfig) => void }): JSX.Element {
+function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; voices: readonly Voice[]; dirty: number; onChange: (next: VolcengineConfig) => void; onSave: () => void }): JSX.Element {
   const { cfg } = props
   const set = (patch: Partial<VolcengineConfig>): void => props.onChange({ ...cfg, ...patch })
   // 联动:seed-tts-2.0 有 230 个预置音色;seed-icl-2.0(复刻)无预置音色列表。
@@ -363,12 +385,13 @@ function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; vo
           <input type="number" min={-12} max={12} value={cfg.pitch} onChange={e => set({ pitch: Number(e.target.value) || 0 })} /></label>
       </div>
       <ProfilesEditor profiles={cfg.voice_profiles} voices={voices} onChange={next => set({ voice_profiles: next })} />
+      <SaveBar dirty={props.dirty} onSave={props.onSave} />
     </div>
   )
 }
 
 /** siliconflow provider 卡片。 */
-function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; voices: readonly Voice[]; models: readonly string[]; onChange: (next: SiliconflowConfig) => void }): JSX.Element {
+function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; voices: readonly Voice[]; models: readonly string[]; dirty: number; onChange: (next: SiliconflowConfig) => void; onSave: () => void }): JSX.Element {
   const { cfg } = props
   const set = (patch: Partial<SiliconflowConfig>): void => props.onChange({ ...cfg, ...patch })
   // 联动:voice_type 是「模型:音色名」前缀形式,按当前 model 过滤。
@@ -412,6 +435,7 @@ function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; 
           <input type="number" min={-10} max={10} step={0.1} value={cfg.gain} onChange={e => set({ gain: Number(e.target.value) || 0 })} /></label>
       </div>
       <ProfilesEditor profiles={cfg.voice_profiles} voices={voices} onChange={next => set({ voice_profiles: next })} />
+      <SaveBar dirty={props.dirty} onSave={props.onSave} />
     </div>
   )
 }
@@ -419,11 +443,8 @@ function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; 
 /** 根组件:bootstrap → 加载数据 → 渲染多 provider 配置表单。 */
 export function App(): JSX.Element {
   const [bootstrap] = useState(readBootstrap)
-  if (bootstrap === undefined) {
-    return <div className="empty">引导数据缺失 (bootstrap missing): 请从 /dsh-voice-tts ui 的链接打开面板</div>
-  }
-
   const [config, setConfig] = useState<Settings | null>(null)
+  const [saved, setSaved] = useState<Settings | null>(null)
   const [status, setStatus] = useState<Status | null>(null)
   const [voices, setVoices] = useState<Record<string, Voice[]>>({ volcengine: [], 'siliconflow-cn': [] })
   const [models, setModels] = useState<Record<string, string[]>>({ volcengine: [], 'siliconflow-cn': [] })
@@ -431,6 +452,7 @@ export function App(): JSX.Element {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (bootstrap === undefined) return
     Promise.all([
       rpc<{ config: Settings }>(bootstrap, 'config-get'),
       rpc<{ status: Status }>(bootstrap, 'status-get'),
@@ -438,6 +460,7 @@ export function App(): JSX.Element {
       rpc<{ voices: Voice[]; models: string[] }>(bootstrap, 'voices-list', { provider: 'siliconflow-cn' }),
     ]).then(([c, s, v1, v2]) => {
       setConfig(c.config)
+      setSaved(c.config)
       setStatus(s.status)
       setVoices({ volcengine: v1.voices, 'siliconflow-cn': v2.voices })
       setModels({ volcengine: v1.models, 'siliconflow-cn': v2.models })
@@ -445,10 +468,47 @@ export function App(): JSX.Element {
       .finally(() => setLoading(false))
   }, [bootstrap])
 
+  const saveRegion = useCallback(async (region: 'global' | 'volcengine' | 'siliconflow-cn'): Promise<void> => {
+    if (bootstrap === undefined || config === null || saved === null) return
+    const toSave: Settings = {
+      delivery: region === 'global' ? config.delivery : saved.delivery,
+      provider: region === 'global' ? config.provider : saved.provider,
+      providers: {
+        volcengine: region === 'volcengine' ? config.providers.volcengine : saved.providers.volcengine,
+        'siliconflow-cn': region === 'siliconflow-cn' ? config.providers['siliconflow-cn'] : saved.providers['siliconflow-cn'],
+      },
+    }
+    try {
+      const v = await rpc<{ config: Settings }>(bootstrap, 'config-set', { config: toSave })
+      setSaved(v.config)
+      setConfig(prev => prev === null ? v.config : {
+        delivery: region === 'global' ? v.config.delivery : prev.delivery,
+        provider: region === 'global' ? v.config.provider : prev.provider,
+        providers: {
+          volcengine: region === 'volcengine' ? v.config.providers.volcengine : prev.providers.volcengine,
+          'siliconflow-cn': region === 'siliconflow-cn' ? v.config.providers['siliconflow-cn'] : prev.providers['siliconflow-cn'],
+        },
+      })
+      rpc<{ status: Status }>(bootstrap, 'status-get').then(s => setStatus(s.status)).catch(() => {})
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [bootstrap, config, saved])
+
+  if (bootstrap === undefined) {
+    return <div className="empty">引导数据缺失 (bootstrap missing): 请从 /dsh-voice-tts ui 的链接打开面板</div>
+  }
   if (loading) return <div className="page"><div className="empty">加载中 (Loading)…</div></div>
-  if (error !== undefined || config === null || status === null) {
+  if (error !== undefined || config === null || saved === null || status === null) {
     return <div className="page"><div className="empty">加载失败: {error ?? '未知错误'}</div></div>
   }
+
+  const globalDirty = countDiff(
+    { delivery: config.delivery, provider: config.provider },
+    { delivery: saved.delivery, provider: saved.provider },
+  )
+  const volDirty = countDiff(config.providers.volcengine, saved.providers.volcengine)
+  const sfDirty = countDiff(config.providers['siliconflow-cn'], saved.providers['siliconflow-cn'])
 
   return (
     <div className="shell">
@@ -474,21 +534,14 @@ export function App(): JSX.Element {
               </select>
             </label>
           </div>
-          <div className="form-actions">
-            <button type="button" className="primary" onClick={() => {
-              if (config === null) return
-              rpc<{ config: Settings }>(bootstrap, 'config-set', { config }).then(v => {
-                setConfig(v.config)
-                rpc<{ status: Status }>(bootstrap, 'status-get').then(s => setStatus(s.status)).catch(() => {})
-              }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-            }}>保存 (Save)</button>
-            <span className="desc">保存 settings(不含 key 值;key 走下方各 provider 卡片)</span>
-          </div>
+          <SaveBar dirty={globalDirty} onSave={() => void saveRegion('global')} />
         </div>
-        <VolcengineCard bootstrap={bootstrap} cfg={config.providers.volcengine} voices={voices.volcengine}
-          onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, volcengine: next } })} />
-        <SiliconflowCard bootstrap={bootstrap} cfg={config.providers['siliconflow-cn']} voices={voices['siliconflow-cn']} models={models['siliconflow-cn']}
-          onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, 'siliconflow-cn': next } })} />
+        <VolcengineCard bootstrap={bootstrap} cfg={config.providers.volcengine} voices={voices.volcengine} dirty={volDirty}
+          onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, volcengine: next } })}
+          onSave={() => void saveRegion('volcengine')} />
+        <SiliconflowCard bootstrap={bootstrap} cfg={config.providers['siliconflow-cn']} voices={voices['siliconflow-cn']} models={models['siliconflow-cn']} dirty={sfDirty}
+          onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, 'siliconflow-cn': next } })}
+          onSave={() => void saveRegion('siliconflow-cn')} />
         <datalist id="voice-tts-key-names">
           {KNOWN_KEY_NAMES.map(name => <option key={name} value={name} />)}
         </datalist>
