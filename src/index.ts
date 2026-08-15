@@ -28,6 +28,7 @@ import { playFile } from './player.js'
 import {
   filterVoices,
   listVoicesText,
+  parseKeyCommand,
   parseTtsCommand,
   renderConfigTemplate,
   renderStatus,
@@ -61,6 +62,11 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
         en: z.string().default(''),
         mixed: z.string().default(''),
       }),
+      voice_profiles: z.dict(z.object({
+        zh: z.string().default(''),
+        en: z.string().default(''),
+        mixed: z.string().default(''),
+      })).default({}),
     }),
   }),
 })
@@ -82,6 +88,7 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       pitch: 0,
       bilingual: 'both',
       voices: {},
+      voice_profiles: {},
     },
   },
 }
@@ -111,6 +118,7 @@ function parseJsonOrThrow(json: string): Record<string, unknown> {
  * @param settings - 已解析设置。
  * @param text - 待合成文本。
  * @param format - 合成格式,默认 `volcengine.format`(host_play 用 `play_format`)。
+ * @param voiceId - 当前 dsh-voice 的 voice id(命中 voice_profiles 时覆盖音色)。
  * @returns 拼接后的音频字节。
  */
 async function synthesizeSpeech(
@@ -118,9 +126,10 @@ async function synthesizeSpeech(
   settings: VoiceTtsSettings,
   text: string,
   format = settings.providers.volcengine.format,
+  voiceId?: string,
 ): Promise<Uint8Array> {
   const volc = settings.providers.volcengine
-  const plan = planBilingualSpeech(text, volc)
+  const plan = planBilingualSpeech(text, volc, voiceId)
   if (plan.runs.length === 0) {
     throw new Error(`no speechable sentences after bilingual=${volc.bilingual} filter`)
   }
@@ -142,11 +151,12 @@ async function synthesizeSpeech(
  * @param tts - TTS 注册表。
  * @param settings - 已解析设置。
  * @param text - 待合成文本。
+ * @param voiceId - 当前 dsh-voice 的 voice id(命中 voice_profiles 时覆盖音色)。
  * @returns 拼接后的音频字节。
  */
-async function streamSpeech(tts: TtsService, settings: VoiceTtsSettings, text: string): Promise<Uint8Array> {
+async function streamSpeech(tts: TtsService, settings: VoiceTtsSettings, text: string, voiceId?: string): Promise<Uint8Array> {
   const volc = settings.providers.volcengine
-  const plan = planBilingualSpeech(text, volc)
+  const plan = planBilingualSpeech(text, volc, voiceId)
   if (plan.runs.length === 0) {
     throw new Error(`no speechable sentences after bilingual=${volc.bilingual} filter`)
   }
@@ -188,6 +198,7 @@ async function deliverSpeech(
   baseName: string,
   text: string,
   delivery: VoiceTtsSettings['delivery'],
+  voiceId: string | undefined,
   warn: (line: string) => void = () => {},
 ): Promise<DeliveryOutcome> {
   const volc = settings.providers.volcengine
@@ -195,13 +206,13 @@ async function deliverSpeech(
     throw new Error('delivery is off')
   }
   if (delivery === 'stream') {
-    const audio = await streamSpeech(tts, settings, text)
+    const audio = await streamSpeech(tts, settings, text, voiceId)
     const path = resolve(cwd, `${baseName}.${volc.format}`)
     writeFileSync(path, audio)
     return { audio, path, played: false, format: volc.format }
   }
   if (delivery === 'host_play') {
-    const audio = await synthesizeSpeech(tts, settings, text, volc.play_format)
+    const audio = await synthesizeSpeech(tts, settings, text, volc.play_format, voiceId)
     const path = resolve(cwd, `${baseName}.${volc.play_format}`)
     writeFileSync(path, audio)
     const child = playFile({ path, format: volc.play_format }, error => {
@@ -209,7 +220,7 @@ async function deliverSpeech(
     })
     return { audio, path, played: child !== undefined, format: volc.play_format }
   }
-  const audio = await synthesizeSpeech(tts, settings, text)
+  const audio = await synthesizeSpeech(tts, settings, text, volc.format, voiceId)
   const path = resolve(cwd, `${baseName}.${volc.format}`)
   writeFileSync(path, audio)
   return { audio, path, played: false, format: volc.format }
@@ -226,6 +237,7 @@ async function executeTtsCommand(
   tts: TtsService,
   scope: SettingsScope<VoiceTtsSettings>,
   invocation: CommandInvocation,
+  resolveVoiceId: () => string | undefined,
 ): Promise<CommandResult> {
   const command = parseTtsCommand(invocation.rawInput)
 
@@ -259,7 +271,7 @@ async function executeTtsCommand(
       const delivery = command.delivery ?? settings.delivery
       try {
         const cwd = invocation.agent.session.header.cwd ?? process.cwd()
-        const outcome = await deliverSpeech(tts, settings, cwd, 'dsh-voice-tts-output', command.text, delivery)
+        const outcome = await deliverSpeech(tts, settings, cwd, 'dsh-voice-tts-output', command.text, delivery, resolveVoiceId())
         const played = outcome.played ? ' (played)' : ''
         return { kind: 'success', text: `synthesized ${outcome.audio.byteLength} bytes (${outcome.format})${played} -> ${outcome.path}` }
       } catch (error) {
@@ -297,6 +309,15 @@ export function apply(ctx: Context): void {
   // Provider —— 首版仅 volcengine。
   ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider(resolveApiKey)), 'volcengine provider')
 
+  // 软读 dsh-voice 的当前 voice id(`voice.tone`),用于 per-voice 音色映射。
+  // 无 dsh-voice(settings 不存在或 voice 命名空间未注册)时返回 undefined,映射自动跳过。
+  const resolveVoiceId = (): string | undefined => {
+    const settings = ctx.get('settings')
+    if (settings === undefined) return undefined
+    const voice = settings.get(settingsNamespace('voice')) as { tone?: string } | undefined
+    return voice?.tone
+  }
+
   // 当前生效设置(settings 挂载前为默认,挂载后随 watch 更新)。
   let activeSettings: VoiceTtsSettings = DEFAULT_SETTINGS
 
@@ -308,7 +329,7 @@ export function apply(ctx: Context): void {
     const text = finalAssistantText(session.events as readonly TurnEventLike[], event.data.turn)
     if (text === undefined) return
     const cwd = session.header.cwd ?? process.cwd()
-    void deliverSpeech(tts, settings, cwd, `dsh-voice-tts-turn-${event.data.turn}`, text, settings.delivery, line => ctx.logger.warn('dsh-voice-tts: %s', line))
+    void deliverSpeech(tts, settings, cwd, `dsh-voice-tts-turn-${event.data.turn}`, text, settings.delivery, resolveVoiceId(), line => ctx.logger.warn('dsh-voice-tts: %s', line))
       .then(outcome => {
         const played = outcome.played ? ' (played)' : ''
         ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', event.data.turn, outcome.audio.byteLength, outcome.format, played, outcome.path)
@@ -329,7 +350,43 @@ export function apply(ctx: Context): void {
       name: 'dsh-voice-tts',
       description: 'text-to-speech synthesis and config (volcengine seed-tts-2.0)',
       input: { hint: '[status|list-voices|config|speak]' },
-      handler: invocation => executeTtsCommand(tts, scope, invocation),
+      handler: invocation => executeTtsCommand(tts, scope, invocation, resolveVoiceId),
     })
+  })
+
+  // 凭证命令:独立命令 + recordInput:false,让 API key 不进 session log。
+  // set 走 ctx.credentials.set(写入 .credentials.yaml),status 只报 configured/source 不回显值。
+  ctx.commands.register({
+    name: 'dsh-voice-tts-key',
+    description: 'set/unset the volcengine TTS API key (recorded privately)',
+    input: { hint: '[set <value>|unset|status]' },
+    recordInput: false,
+    handler: async invocation => {
+      const command = parseKeyCommand(invocation.rawInput)
+      const ref = credentialRef(VOLCENGINE_API_KEY_REF)
+      const credentials = ctx.get('credentials')
+      if (credentials === undefined) {
+        return { kind: 'error', text: 'credentials service is not available' }
+      }
+      if (command.kind === 'set') {
+        try {
+          await credentials.set(ref, command.value)
+          return { kind: 'success', text: 'API key stored.' }
+        } catch (error) {
+          return { kind: 'error', text: `failed to store API key: ${describeError(error)}` }
+        }
+      }
+      if (command.kind === 'unset') {
+        try {
+          await credentials.unset(ref)
+          return { kind: 'success', text: 'API key removed.' }
+        } catch (error) {
+          return { kind: 'error', text: `failed to remove API key: ${describeError(error)}` }
+        }
+      }
+      const info = await credentials.describe(ref)
+      const source = info.source !== undefined ? `, source: ${info.source}` : ''
+      return { kind: 'success', text: `configured: ${String(info.configured)}${source}, writable: ${String(info.writable)}` }
+    },
   })
 }

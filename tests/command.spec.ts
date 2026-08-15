@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   filterVoices,
   listVoicesText,
+  parseKeyCommand,
   parseTtsCommand,
   renderConfigTemplate,
   renderStatus,
@@ -55,6 +56,26 @@ describe('parseTtsCommand', () => {
   })
 })
 
+describe('parseKeyCommand', () => {
+  it('parses set with a non-empty value', () => {
+    expect(parseKeyCommand('set sk-abc123')).toEqual({ kind: 'set', value: 'sk-abc123' })
+  })
+
+  it('parses unset', () => {
+    expect(parseKeyCommand('unset')).toEqual({ kind: 'unset' })
+  })
+
+  it('treats empty and status as status', () => {
+    expect(parseKeyCommand('')).toEqual({ kind: 'status' })
+    expect(parseKeyCommand('status')).toEqual({ kind: 'status' })
+  })
+
+  it('falls back to status for malformed input', () => {
+    expect(parseKeyCommand('set')).toEqual({ kind: 'status' })
+    expect(parseKeyCommand('bogus')).toEqual({ kind: 'status' })
+  })
+})
+
 describe('filterVoices', () => {
   it('returns all when query is empty', () => {
     expect(filterVoices([voice], '')).toHaveLength(1)
@@ -94,6 +115,7 @@ describe('renderStatus', () => {
         pitch: 0,
         bilingual: 'both',
         voices: {},
+        voice_profiles: {},
       },
     },
   }
@@ -113,7 +135,7 @@ describe('renderConfigTemplate', () => {
     const parsed = JSON.parse(template) as { provider: string; config: Record<string, unknown>; credentials: { apiKeyRef: string } }
     expect(parsed.provider).toBe('volcengine')
     expect(Object.keys(parsed.config)).toEqual([
-      'voice_type', 'resource_id', 'model', 'format', 'play_format', 'sample_rate', 'speech_rate', 'loudness_rate', 'pitch', 'bilingual', 'voices',
+      'voice_type', 'resource_id', 'model', 'format', 'play_format', 'sample_rate', 'speech_rate', 'loudness_rate', 'pitch', 'bilingual', 'voices', 'voice_profiles',
     ])
     expect(parsed.credentials.apiKeyRef).toBe('VOLCENGINE_TTS_API_KEY')
   })

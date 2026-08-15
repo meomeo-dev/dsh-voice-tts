@@ -8,7 +8,7 @@
  * @module dsh-voice-tts/bilingual
  */
 
-import type { BilingualMode, SentenceLang, VolcengineConfig } from './types.js'
+import type { BilingualMode, SentenceLang, VoiceTtsVoices, VolcengineConfig } from './types.js'
 
 /** 一句已判定语言的文本。 */
 export interface BilingualSentence {
@@ -130,23 +130,55 @@ export function filterSentences(
   return sentences.filter(sentence => sentence.lang === 'mixed' || sentence.lang === keep)
 }
 
-/** 某语言类别应使用的音色。 */
+/**
+ * 解析某语言类别应使用的音色(先 per-voice profile,再缺省 voices,最后 voice_type)。
+ * @param lang - 语言类别。
+ * @param voices - 已解析的音色覆盖(可能来自 voice_profiles 或缺省 voices)。
+ * @param fallback - voice_type 兜底。
+ */
+function voiceForVoices(lang: SentenceLang, voices: VoiceTtsVoices, fallback: string): string {
+  if (lang === 'zh') return voices.zh || fallback
+  if (lang === 'en') return voices.en || fallback
+  return voices.mixed || voices.zh || fallback
+}
+
+/**
+ * 解析某语言类别应使用的音色(缺省 voices)。
+ * @param lang - 语言类别。
+ * @param config - volcengine 配置。
+ */
 export function voiceFor(lang: SentenceLang, config: VolcengineConfig): string {
-  const voices = config.voices
-  if (lang === 'zh') return voices.zh || config.voice_type
-  if (lang === 'en') return voices.en || config.voice_type
-  return voices.mixed || voices.zh || config.voice_type
+  return voiceForVoices(lang, config.voices, config.voice_type)
+}
+
+/**
+ * 命中当前 voice id 时返回 per-voice 音色覆盖,否则回退缺省 voices。
+ * @param config - volcengine 配置。
+ * @param voiceId - 当前 dsh-voice 的 voice id(如 `steve-jobs`);无则用缺省。
+ * @returns 生效的音色覆盖。
+ */
+export function effectiveVoices(config: VolcengineConfig, voiceId: string | undefined): VoiceTtsVoices {
+  if (voiceId !== undefined) {
+    const profile = config.voice_profiles[voiceId]
+    if (profile !== undefined) return profile
+  }
+  return config.voices
 }
 
 /** 规划双语播报:过滤后按语言分配音色,相邻同音色句子合并为一个分片。 */
-export function planBilingualSpeech(text: string, config: VolcengineConfig): BilingualPlan {
+export function planBilingualSpeech(
+  text: string,
+  config: VolcengineConfig,
+  voiceId?: string,
+): BilingualPlan {
+  const voices = effectiveVoices(config, voiceId)
   const sentences = analyzeBilingual(text)
   const selected = filterSentences(sentences, config.bilingual)
   const runs: VoiceRun[] = []
   const byLang: Record<SentenceLang, number> = { zh: 0, en: 0, mixed: 0 }
   for (const sentence of selected) {
     byLang[sentence.lang]++
-    const voice = voiceFor(sentence.lang, config)
+    const voice = voiceForVoices(sentence.lang, voices, config.voice_type)
     const last = runs[runs.length - 1]
     if (last !== undefined && last.voice === voice) {
       runs[runs.length - 1] = { voice, lang: sentence.lang, text: `${last.text} ${sentence.text}`, count: last.count + 1 }

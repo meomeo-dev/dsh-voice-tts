@@ -68,6 +68,11 @@ voice-tts:
         zh: zh_female_vv_uranus_bigtts
         en: en_male_alex_uranus_bigtts
         mixed: zh_female_vv_uranus_bigtts
+      voice_profiles:                         # 按 dsh-voice id 映射的整套 voices(缺省回退 voices)
+        steve-jobs:
+          zh: zh_male_m191_uranus_bigtts
+          en: en_male_david_uranus_bigtts
+          mixed: zh_male_m191_uranus_bigtts
 ```
 
 字段与 volcengine API 的映射(权威见 `api-unidirectional-http.md`):
@@ -86,6 +91,7 @@ voice-tts:
 | `pitch` | `post_process.pitch` | `0` | `[-12,12]` | 音调 |
 | `bilingual` | —(本地策略) | `both` | `both` / `english_only` / `chinese_only` | 双语播报过滤(见 §7) |
 | `voices` | —(本地策略) | `{}` | `{ zh?, en?, mixed? }` | 各语言类别音色覆盖;缺省回退 `voice_type`,mixed 先回退 zh 再回退 voice_type |
+| `voice_profiles` | —(本地策略) | `{}` | `{ <voice-id>: { zh?, en?, mixed? } }` | 按 dsh-voice id 映射的整套 voices;命中则整体覆盖 `voices`,缺省回退 `voices`(见 §7.4) |
 
 **非目标(首版不进 settings)**:`additions` 里的 `silence_duration`/`disable_markdown_filter`/`disable_emoji_filter`/`explicit_language`/`explicit_dialect`、`context_texts`(语音指令)、`section_id`、`tone_fidelity`、字幕、缓存——这些是进阶能力,后续 provider 扩展时逐个加进 settings,首版只做「文本→音频」。
 
@@ -101,6 +107,16 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`),凭证引用名 `VOL
   ```
 - credentials-local 的解析链:继承 process env(只读、最高)→ `.credentials.yaml`(可写)→ `<cwd>/.env` / `$DSH_HOME/.env`(回退)。所以凭证**可通过**环境变量 `.env` 覆盖,但插件代码不直接读 `process.env`——它只认 `ctx.credentials.resolve`,这样 `describe()` 能报告「从哪来、可写吗」、轮换凭证不碰配置、settings 文档不含秘密。
 - 无 credentials seam 挂载的嵌入场景,才回退读 `process.env[VOLCENGINE_TTS_API_KEY]`(与 llm-deepseek 的 `credentials === undefined` 分支一致)。
+
+**命令行管理**:提供 `/dsh-voice-tts-key` 命令,把 key 的写入/删除/查看收敛到 credentials seam,避免用户手写 `.credentials.yaml`:
+
+```
+/dsh-voice-tts-key set <value>    # 写 .credentials.yaml(0600)
+/dsh-voice-tts-key unset          # 删除
+/dsh-voice-tts-key status         # 只报 configured / source / writable,不回显值
+```
+
+该命令 `recordInput: false`,参数不进 session log(见 §4.3);`set` 走 `ctx.credentials.set`(写 `.credentials.yaml`),`status` 走 `ctx.credentials.describe`(报告「从哪来、可写吗」但不回显密钥值)。
 
 > **安全提示**:API key(`X-Api-Key` 头)是敏感凭据。若已在任何对话/日志中暴露,须在 volcengine 控制台**立即轮换**。本插件实现与文档绝不硬编码 key。
 
@@ -134,7 +150,8 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`),凭证引用名 `VOL
     "loudness_rate":{ "type": "number", "required": false, "default": 0,                           "description": "音量 [-50,100],100=2倍音量" },
     "pitch":        { "type": "number", "required": false, "default": 0,                           "description": "音调 [-12,12]" },
     "bilingual":    { "type": "string", "required": false, "default": "both", "enum": ["both","english_only","chinese_only"], "description": "双语播报模式;混合句永远整句读" },
-    "voices":       { "type": "object", "required": false, "default": null,                        "description": "各语言类别音色覆盖 { zh, en, mixed },缺省回退 voice_type" }
+    "voices":       { "type": "object", "required": false, "default": null,                        "description": "各语言类别音色覆盖 { zh, en, mixed },缺省回退 voice_type" },
+    "voice_profiles": { "type": "object", "required": false, "default": null,                      "description": "按 dsh-voice id 映射的整套 voices { <voice-id>: { zh, en, mixed } },命中整体覆盖 voices" }
   },
   "credentials": {
     "apiKeyRef": "VOLCENGINE_TTS_API_KEY"
@@ -156,6 +173,9 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`),凭证引用名 `VOL
 /dsh-voice-tts status                 # 当前 provider / autoplay / 配置概览
 /dsh-voice-tts list-voices [provider] # 列出可用音色(场景/音色名/voice_type/语言/是否支持指令)
 /dsh-voice-tts config --json <json>   # 覆盖配置
+/dsh-voice-tts-key set <value>        # 存 API key(recordInput:false,value 不进 session log)
+/dsh-voice-tts-key unset              # 删 API key
+/dsh-voice-tts-key status             # 只报 configured/source/writable,不回显值
 ```
 
 ## 5. JSON 转义探针结论(已定稿)
@@ -211,6 +231,15 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`),凭证引用名 `VOL
    - 英文句 → `voices.en ?? voice_type`
    - 混合句 → `voices.mixed ?? voices.zh ?? voice_type`
 4. **合成**:相邻同音色的句子合并为一次 API 调用(减少往返),按序拼接为最终音频。
+
+### 按 dsh-voice id 映射整套 voices(`voice_profiles`)
+
+`voices` 是「全局默认」的三语言音色;`voice_profiles` 是按 dsh-voice 当前口吻 id 覆盖的整套 voices,让「乔布斯」用男声、「少女」用女声等口吻与音色联动:
+
+1. **命中来源**:插件软读 dsh-voice 的当前 voice id(`settings.get(settingsNamespace('voice')).tone`,如 `steve-jobs`)。dsh-voice 只把口吻存在 settings 命名空间 `voice` 的 `tone` 字段、不暴露服务,故跨 bundle 用 settings 软读(对齐 dsh-voice 自身 `ctx.get('settings').get(...)` 的做法)。
+2. **解析规则**:`effectiveVoices(config, voiceId)` 返回 `config.voice_profiles[voiceId] ?? config.voices`——命中 profile 则**整体替换** voices(profile 未填的类别仍回退 `voice_type`),未命中(voiceId 为 `undefined`、未映射)则回退全局 `voices`。
+3. **接线**:`/dsh-voice-tts speak` 与 `turn/end` 自动合成都先 `resolveVoiceId()` 拿到当前口吻 id,再把 `voiceId` 透传给 `planBilingualSpeech(text, config, voiceId)`,后续分句/过滤/音色分配/合并/拼接逻辑不变。
+4. **软读语义**:无 dsh-voice(settings 未挂载或 `voice` 命名空间未注册)时 `voiceId` 为 `undefined`,`voice_profiles` 自动跳过,退回全局 `voices`——不影响无 dsh-voice 的纯 TTS 使用。
 
 ### 触发面
 
@@ -275,3 +304,5 @@ volcengine 音色列表已整理为权威参考:
 9. `/dsh-voice-tts speak <双语文本>` 按 §7 语义:切句→判定语言→`bilingual` 过滤(混合句永远读)→按 `voices` 分配音色→相邻同音色合并→拼接输出;`bilingual=english_only` 时纯中文句被跳过。
 10. `speak [--delivery <mode>]` 支持交付覆盖,缺省用 `settings.delivery`。
 11. `delivery≠off` 时,`turn/end` 触发:提取该 turn 最终可见 assistant 文本(跳过 tool-call-only 消息)→ 双语管线合成 → 按 delivery 交付;`delivery=off` 时不处理。
+12. `/dsh-voice-tts-key set|unset|status` 收敛到 credentials seam:`set` 写 `.credentials.yaml`、`unset` 删、`status` 只报 configured/source/writable 不回显值;`recordInput:false` 使 value 不进 session log。
+13. `voice_profiles` 按 dsh-voice id 映射:软读 `voice.tone` 命中 profile 则整体替换 `voices`,未命中回退全局 `voices`;无 dsh-voice 时映射自动跳过。

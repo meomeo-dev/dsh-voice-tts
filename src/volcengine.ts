@@ -68,6 +68,10 @@ export const VOLCENGINE_CONFIG_TEMPLATE: ConfigTemplate = {
       type: 'object', required: false, default: null,
       description: '各语言类别音色覆盖 { zh, en, mixed },缺省回退 voice_type;mixed 先回退 zh 再回退 voice_type',
     },
+    voice_profiles: {
+      type: 'object', required: false, default: null,
+      description: 'per-voice 音色映射 { <voice id>: { zh, en, mixed } },命中当前 dsh-voice 的 voice id 时取代 voices',
+    },
   },
   credentials: { apiKeyRef: VOLCENGINE_API_KEY_REF },
 }

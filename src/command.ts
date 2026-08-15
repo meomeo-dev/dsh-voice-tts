@@ -141,3 +141,26 @@ export function renderStatus(settings: VoiceTtsSettings, providerIds: readonly s
 
 /** 默认音色 id(供 status 展示)。 */
 export { DEFAULT_VOICE_TYPE }
+
+/** `/dsh-voice-tts-key` 命令的解析结果。 */
+export type KeyCommand =
+  | { readonly kind: 'status' }
+  | { readonly kind: 'set'; readonly value: string }
+  | { readonly kind: 'unset' }
+
+/**
+ * 解析 `/dsh-voice-tts-key` 命令:set <value> 存、unset 删、其余查看状态。
+ * 该命令 `recordInput: false`,value 不进 session log。
+ * @param rawInput - 命令名之后的原始文本(含前导空白)。
+ * @returns 解析结果;非法输入回退 status。
+ */
+export function parseKeyCommand(rawInput: string): KeyCommand {
+  const input = rawInput.trim()
+  if (input.length === 0 || input === 'status') return { kind: 'status' }
+  if (input === 'unset') return { kind: 'unset' }
+  if (input.startsWith('set ')) {
+    const value = input.slice('set '.length).trim()
+    if (value.length > 0) return { kind: 'set', value }
+  }
+  return { kind: 'status' }
+}

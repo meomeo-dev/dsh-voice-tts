@@ -92,6 +92,9 @@ export interface VoiceTtsVoices {
   readonly mixed?: string
 }
 
+/** per-voice 音色映射:key 是 dsh-voice 的 voice id(如 `steve-jobs`),value 是该口吻的音色覆盖。 */
+export type VoiceTtsProfiles = Record<string, VoiceTtsVoices>
+
 /** turn-final 的音频交付方式。 */
 export type DeliveryMode = 'off' | 'file' | 'host_play' | 'stream'
 
@@ -117,8 +120,10 @@ export interface VolcengineConfig {
   pitch: number
   /** bilingual 播报模式。 */
   bilingual: BilingualMode
-  /** 各语言类别音色覆盖。 */
+  /** 各语言类别音色覆盖(缺省)。 */
   voices: VoiceTtsVoices
+  /** per-voice 音色覆盖:命中当前 voice id 时取代 `voices`。 */
+  voice_profiles: VoiceTtsProfiles
 }
 
 /** `voice-tts` 设置命名空间的已解析切片。 */

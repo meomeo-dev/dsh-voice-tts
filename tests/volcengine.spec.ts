@@ -20,6 +20,7 @@ const config: VolcengineConfig = {
   pitch: 0,
   bilingual: 'both',
   voices: {},
+  voice_profiles: {},
 }
 
 describe('buildVolcengineRequest', () => {

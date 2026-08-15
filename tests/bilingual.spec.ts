@@ -3,6 +3,7 @@ import {
   analyzeBilingual,
   classifySentence,
   concatAudio,
+  effectiveVoices,
   filterSentences,
   planBilingualSpeech,
   segmentSentences,
@@ -22,6 +23,7 @@ const base: VolcengineConfig = {
   pitch: 0,
   bilingual: 'both',
   voices: {},
+  voice_profiles: {},
 }
 
 describe('segmentSentences', () => {
@@ -87,6 +89,32 @@ describe('voiceFor', () => {
 
     const mixedOnly = { ...base, voices: { mixed: 'mixed_voice' } }
     expect(voiceFor('mixed', mixedOnly)).toBe('mixed_voice')
+  })
+})
+
+describe('effectiveVoices / per-voice profiles', () => {
+  it('falls back to default voices when voiceId is undefined', () => {
+    const cfg = { ...base, voices: { zh: 'zh_default' } }
+    expect(effectiveVoices(cfg, undefined)).toEqual({ zh: 'zh_default' })
+  })
+
+  it('returns the profile when voiceId matches, else falls back', () => {
+    const cfg = {
+      ...base,
+      voices: { zh: 'zh_default' },
+      voice_profiles: { 'steve-jobs': { zh: 'zh_male', en: 'en_male' } },
+    }
+    expect(effectiveVoices(cfg, 'steve-jobs')).toEqual({ zh: 'zh_male', en: 'en_male' })
+    expect(effectiveVoices(cfg, 'unknown-id')).toEqual({ zh: 'zh_default' })
+  })
+
+  it('plan uses the matched profile voices', () => {
+    const cfg = {
+      ...base,
+      voice_profiles: { 'steve-jobs': { zh: 'zh_male', en: 'en_male' } },
+    }
+    const plan = planBilingualSpeech('中文句。English sentence.', cfg, 'steve-jobs')
+    expect(plan.runs.map(r => r.voice)).toEqual(['zh_male', 'en_male'])
   })
 })
 

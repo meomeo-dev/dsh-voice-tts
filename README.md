@@ -26,7 +26,9 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
   - `config --json <json>` — 覆盖 provider 配置
   - `speak [--delivery <mode>] <text>` — 合成文本并按 delivery 交付(缺省读 settings.delivery)
 - **bilingual 双语播报**:按句切分判定 `zh`/`en`/`mixed`,按 `bilingual=both|english_only|chinese_only` 过滤(混合句永远整句读),`voices:{zh,en,mixed}` 多音色。
+- **per-voice 音色映射**(`voice_profiles`):软读 dsh-voice 当前口吻 id(`voice.tone`),按 id 命中整套 `voices` 覆盖(如「乔布斯」用男声、「少女」用女声),未命中回退全局 `voices`。
 - **turn-final 交付**:`delivery≠off` 时,监听 `session/event` 的 `turn/end`,每轮结束提取最终 assistant 文本按 delivery 交付(纯插件,不改 dsh 源码)。
+- **API key 命令** `/dsh-voice-tts-key set|unset|status`:收敛到 credentials seam,`recordInput:false`(value 不进 session log),`status` 只报 configured/source 不回显值。
 
 ## 配置
 
@@ -50,6 +52,11 @@ voice-tts:
         zh: zh_female_vv_uranus_bigtts
         en: en_male_alex_uranus_bigtts
         mixed: zh_female_vv_uranus_bigtts
+      voice_profiles:                 # 按 dsh-voice id 映射整套 voices,缺省回退 voices
+        steve-jobs:
+          zh: zh_male_m191_uranus_bigtts
+          en: en_male_david_uranus_bigtts
+          mixed: zh_male_m191_uranus_bigtts
 ```
 
 > `host_play` 让「host 进程所在的机器」发声(个人 PC 上 `dsh web` 才能听见),不是「浏览器所在设备」;远程/容器部署时此模式无效。
@@ -59,6 +66,14 @@ voice-tts:
 ## 凭据
 
 API key 走 dsh 的 **credentials seam**(`ctx.credentials.resolve(credentialRef('VOLCENGINE_TTS_API_KEY'))`),值存 `$DSH_HOME/.credentials.yaml`(0600),不进 settings / session log / 不硬编码。credentials-local 会回退到 process env / `.env`,但插件代码不直接读 `process.env`。
+
+可用命令管理 key(`recordInput:false`,`set` 的 value 不进 session log):
+
+```
+/dsh-voice-tts-key set <value>   # 写 .credentials.yaml
+/dsh-voice-tts-key unset         # 删除
+/dsh-voice-tts-key status        # 只报 configured/source/writable,不回显值
+```
 
 ## 文档证据
 

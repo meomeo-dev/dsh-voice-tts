@@ -45,6 +45,7 @@ function resolveConfig(config: Record<string, unknown>): VolcengineConfig {
     pitch: typeof config.pitch === 'number' ? config.pitch : 0,
     bilingual: 'both',
     voices: {},
+    voice_profiles: {},
   }
 }
 
