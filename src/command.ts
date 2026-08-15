@@ -15,6 +15,7 @@ export const USAGE = [
   '  config --template [provider]      # 输出某 provider 的完整配置模板(JSON)',
   '  config --json <json>              # 用 JSON 覆盖 provider 配置(部分字段即可)',
   '  speak [--delivery <mode>] <text>  # 合成文本,按 delivery(默认读 settings.delivery)交付',
+  '  ui                                # 打印 Web 配置面板 URL(web 模式专用)',
 ].join('\n')
 
 const DELIVERY_MODES: readonly DeliveryMode[] = ['off', 'file', 'host_play', 'stream']
@@ -26,6 +27,7 @@ export type TtsCommand =
   | { readonly kind: 'config-template'; readonly provider: string }
   | { readonly kind: 'config-json'; readonly json: string }
   | { readonly kind: 'speak'; readonly text: string; readonly delivery?: DeliveryMode }
+  | { readonly kind: 'ui' }
   | { readonly kind: 'help' }
 
 /**

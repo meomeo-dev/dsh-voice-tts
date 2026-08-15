@@ -152,6 +152,18 @@ export function voiceFor(lang: SentenceLang, config: VolcengineConfig): string {
 }
 
 /**
+ * 解析某语言类别在当前 voice id 下的最终音色:先 per-voice profile,再缺省
+ * voices,最后 voice_type。与 {@link planBilingualSpeech} 的分配规则同源
+ * (status 预览用),避免两处漂移。
+ * @param lang - 语言类别。
+ * @param config - volcengine 配置。
+ * @param voiceId - 当前 dsh-voice 的 voice id;无则走缺省 voices。
+ */
+export function resolvedVoice(lang: SentenceLang, config: VolcengineConfig, voiceId?: string): string {
+  return voiceForVoices(lang, effectiveVoices(config, voiceId), config.voice_type)
+}
+
+/**
  * 命中当前 voice id 时返回 per-voice 音色覆盖,否则回退缺省 voices。
  * @param config - volcengine 配置。
  * @param voiceId - 当前 dsh-voice 的 voice id(如 `steve-jobs`);无则用缺省。

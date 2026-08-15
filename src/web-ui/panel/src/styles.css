@@ -1,0 +1,292 @@
+/*
+ * 面板基础样式:设计令牌镜像(light 主题子集)+ 布局壳 + 表单控件。
+ * 面板是独立页,不加载 dsh SPA 样式表,故按值镜像;漂移只影响视觉,不影响功能。
+ */
+:root {
+  --dsw-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --ds-font-family-code: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas,
+    'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei';
+
+  --bg-base: rgb(255, 255, 255);
+  --bg-platform: rgb(245, 246, 247);
+  --border-l1: rgba(0, 0, 0, 0.04);
+  --border-l2: rgba(0, 0, 0, 0.1);
+  --border-l3: rgba(0, 0, 0, 0.12);
+  --label-primary: rgb(15, 17, 21);
+  --label-secondary: rgb(97, 102, 107);
+  --label-tertiary: rgb(129, 133, 140);
+  --label-caption: rgb(173, 178, 184);
+  --business-primary: rgb(65, 118, 230);
+  --business-primary-dark: rgb(72, 104, 178);
+  --error: rgb(236, 19, 19);
+  --success: rgb(34, 197, 94);
+  --error-bg: rgb(254, 242, 242);
+  --success-bg: rgb(230, 250, 237);
+  --hover: rgba(38, 49, 72, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-platform);
+  color: var(--label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.mono {
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+}
+
+.key {
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+.desc {
+  color: var(--label-caption);
+  font-size: 12px;
+}
+
+.meta {
+  color: var(--label-caption);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 48px;
+  padding: 0 20px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border-l1);
+  position: sticky;
+  top: 0;
+}
+
+.brand {
+  font-weight: 600;
+  color: var(--business-primary);
+}
+
+.page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card {
+  background: var(--bg-base);
+  border: 1px solid var(--border-l2);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section-title {
+  font-weight: 600;
+  color: var(--label-secondary);
+  font-size: 13px;
+}
+
+/* 状态预览条 */
+.status-strip .status-voices {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.status-voice {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-l2);
+  border-radius: 6px;
+  min-width: 160px;
+}
+
+/* 表单 */
+.form {
+  gap: 16px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.voice-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* voice_profiles 行编辑器 */
+.profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profile-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 1fr 1fr auto;
+  gap: 8px;
+  align-items: end;
+  padding: 8px;
+  border: 1px solid var(--border-l1);
+  border-radius: 6px;
+  background: var(--bg-platform);
+}
+
+.profile-id {
+  grid-column: 1;
+}
+
+/* 表单控件 */
+select,
+input[type='text'],
+input[type='number'],
+input[type='password'],
+input[type='search'],
+textarea {
+  font-family: var(--dsw-font-family);
+  font-size: 13px;
+  color: var(--label-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border-l2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+select:focus,
+input:focus,
+textarea:focus {
+  border-color: var(--business-primary);
+}
+
+/* 按钮 */
+button.primary {
+  font-family: var(--dsw-font-family);
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--business-primary);
+  background: var(--business-primary);
+  color: var(--bg-base);
+  font-weight: 500;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--business-primary-dark);
+  border-color: var(--business-primary-dark);
+}
+
+button.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.refresh {
+  font-family: var(--dsw-font-family);
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border-l2);
+  background: var(--bg-base);
+  color: var(--label-secondary);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button.refresh:hover {
+  border-color: var(--border-l3);
+  color: var(--label-primary);
+}
+
+button.refresh.danger {
+  color: var(--error);
+}
+
+button.refresh.danger:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.key-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.key-actions input {
+  flex: 1;
+  max-width: 360px;
+}
+
+/* 提示 / 空态 */
+.banner {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.banner.ok {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.banner.error {
+  background: var(--error-bg);
+  color: var(--error);
+}
+
+.empty {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--label-caption);
+  background: var(--bg-base);
+  border: 1px dashed var(--border-l2);
+  border-radius: 8px;
+}

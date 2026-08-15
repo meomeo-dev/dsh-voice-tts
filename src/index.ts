@@ -34,6 +34,25 @@ import {
   renderStatus,
   USAGE,
 } from './command.js'
+import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-client-connection'
+import {
+  assetContentType,
+  ASSET_PREFIX,
+  describeStatus,
+  findPanelDist,
+  generatePanelToken,
+  handlePanelRpc,
+  PANEL_CHANNEL,
+  PANEL_PAGE,
+  panelUrl,
+  queryToken,
+  readPanelAsset,
+  renderPanelShell,
+  resolvePanelAsset,
+  safeTokenEqual,
+  type PanelDeps,
+} from './ui.js'
 
 export const name = 'dsh-voice-tts'
 export const inject = ['commands']
@@ -97,6 +116,13 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
+
+/** 当前已注册的 voice-tts 设置作用域(settings 挂载后赋值;面板 RPC 经它读写)。 */
+let activeScope: SettingsScope<VoiceTtsSettings> | undefined
+
+/** 面板访问 token 与监听端口(registerPanel 启动时赋值;`ui` 命令用它打印 URL)。 */
+let panelToken: string | undefined
+let panelPort: number | undefined
 
 /** 解析 JSON;失败抛可读错误。 */
 function parseJsonOrThrow(json: string): Record<string, unknown> {
@@ -278,7 +304,125 @@ async function executeTtsCommand(
         return { kind: 'error', text: `synthesis failed: ${describeError(error)}` }
       }
     }
+    case 'ui': {
+      if (panelToken === undefined || panelPort === undefined) {
+        return { kind: 'error', text: 'voice-tts panel is not available: this session has no webServer/connection (web mode only).' }
+      }
+      return { kind: 'success', text: `voice-tts panel (展开后复制 URL): ${panelUrl(panelPort, panelToken)}` }
+    }
   }
+}
+
+/**
+ * 注册 voice-tts Web 配置面板(path B 独立页,见 ui.ts 模块文档):
+ *   - GET `/voice-tts`(配置页,须 `?ac_token=`);
+ *   - GET `/voice-tts-assets/*`(前缀,白名单后缀 + 路径防穿越 + token);
+ *   - POST `/voice-tts-api/*` RPC channel(authority: 'loopback',信任栅栏 + 载荷 token)。
+ * 仅当 webServer 与 connection 服务同时存在(web 模式)且 panel 构建产物在位时注册;
+ * headless 环境无这两个服务,面板不存在,`/dsh-voice-tts ui` 报不可用。
+ * @param ctx - 插件上下文。
+ * @param tts - TTS 注册表(音色表来源)。
+ * @param resolveVoiceId - 软读当前 dsh-voice id。
+ */
+function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: () => string | undefined): void {
+  const web = ctx.get('webServer')
+  if (web === undefined) return
+  const panelDir = findPanelDist()
+  if (panelDir === undefined) {
+    ctx.logger.warn('dsh-voice-tts: panel dist not found (run `pnpm panel:build`); web panel disabled')
+    return
+  }
+  const token = generatePanelToken()
+  panelToken = token
+  panelPort = web.port
+
+  const servePage: WebRoute['handler'] = (req, res) => {
+    if (!safeTokenEqual(queryToken(req.url) ?? '', token)) {
+      res.writeHead(403)
+      res.end('forbidden')
+      return
+    }
+    const html = renderPanelShell({ token, channel: PANEL_CHANNEL })
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(html)
+  }
+
+  ctx.effect(() => web.register({ kind: 'exact', path: PANEL_PAGE, handler: servePage }), 'dsh-voice-tts: /voice-tts page')
+  ctx.effect(() => web.register({
+    kind: 'prefix',
+    path: ASSET_PREFIX.slice(0, -1),
+    handler: (req, res) => {
+      const rawUrl = req.url ?? '/'
+      let pathname: string
+      try {
+        pathname = new URL(rawUrl, 'http://x').pathname
+      } catch {
+        res.writeHead(400)
+        res.end()
+        return
+      }
+      if (!safeTokenEqual(queryToken(rawUrl) ?? '', token)) {
+        res.writeHead(403)
+        res.end('forbidden')
+        return
+      }
+      const file = resolvePanelAsset(panelDir, pathname)
+      const content = file === undefined ? undefined : readPanelAsset(panelDir, pathname)
+      if (file === undefined || content === undefined) {
+        res.writeHead(404)
+        res.end()
+        return
+      }
+      res.writeHead(200, { 'content-type': assetContentType(file), 'cache-control': 'no-cache' })
+      res.end(content)
+    },
+  }), 'dsh-voice-tts: /voice-tts-assets route')
+
+  // connection 由 client-connection 插件 fiber 提供:loader 并发启动 plugin,
+  // apply 时该 fiber 未必已 ACTIVE,故用声明式注入而非 ctx.get(与 api-proxy 同款)。
+  ctx.inject(['connection'], (cctx) => {
+    const deps: PanelDeps = {
+      getConfig() {
+        return activeScope?.get() ?? DEFAULT_SETTINGS
+      },
+      async setConfig(config) {
+        const scope = activeScope
+        if (scope === undefined) throw new Error('settings service is not available')
+        await scope.replace(config)
+        return scope.get()
+      },
+      status() {
+        return describeStatus(activeScope?.get() ?? DEFAULT_SETTINGS, resolveVoiceId())
+      },
+      listVoices() {
+        return tts.listVoices('volcengine')
+      },
+      async keyStatus() {
+        const credentials = ctx.get('credentials')
+        if (credentials === undefined) return { configured: false, source: null, writable: false }
+        const info = await credentials.describe(credentialRef(VOLCENGINE_API_KEY_REF))
+        return { configured: info.configured, source: info.source ?? null, writable: info.writable }
+      },
+      async setKey(value) {
+        const credentials = ctx.get('credentials')
+        if (credentials === undefined) throw new Error('credentials service is not available')
+        await credentials.set(credentialRef(VOLCENGINE_API_KEY_REF), value)
+      },
+      async unsetKey() {
+        const credentials = ctx.get('credentials')
+        if (credentials === undefined) throw new Error('credentials service is not available')
+        await credentials.unset(credentialRef(VOLCENGINE_API_KEY_REF))
+      },
+    }
+    const disposeChannel = cctx.connection.rpc.handle(
+      PANEL_CHANNEL,
+      (endpoint, payload, _signal) => handlePanelRpc(endpoint, payload, token, deps),
+      { authority: 'loopback' },
+    )
+    cctx.effect(() => disposeChannel, 'dsh-voice-tts: /voice-tts-api channel')
+    // 面板 URL 是就绪信号,打印到 stdout(与 `dsh web:` 行一致),便于 CLI/服务日志可见。
+    console.log(`dsh-voice-tts panel: ${panelUrl(web.port, token)}`)
+  })
 }
 
 /**
@@ -342,6 +486,7 @@ export function apply(ctx: Context): void {
   // Consumer —— settings 可选;存在时接管 activeSettings 并挂命令。
   ctx.inject(['settings'], (sctx) => {
     const scope = sctx.settings.register(NAMESPACE, SCHEMA)
+    activeScope = scope
     activeSettings = scope.get()
     scope.watch(next => {
       activeSettings = next
@@ -349,7 +494,7 @@ export function apply(ctx: Context): void {
     ctx.commands.register({
       name: 'dsh-voice-tts',
       description: 'text-to-speech synthesis and config (volcengine seed-tts-2.0)',
-      input: { hint: '[status|list-voices|config|speak]' },
+      input: { hint: '[status|list-voices|config|speak|ui]' },
       handler: invocation => executeTtsCommand(tts, scope, invocation, resolveVoiceId),
     })
   })
@@ -389,4 +534,7 @@ export function apply(ctx: Context): void {
       return { kind: 'success', text: `configured: ${String(info.configured)}${source}, writable: ${String(info.writable)}` }
     },
   })
+
+  // Web 配置面板:webServer + connection 同时存在时注册(web 模式);否则静默跳过。
+  registerPanel(ctx, tts, resolveVoiceId)
 }
