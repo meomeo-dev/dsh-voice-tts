@@ -169,13 +169,18 @@ provider 配置里只存 `apiKeyRef` 的**引用名**,不存值。对齐 dsh-bas
 - **解析策略**:handler 里对 `rawInput.trim()` 做子命令分派,取 `--json` 之后的子串直接 `JSON.parse`,**无需逆转义**。
 - 用户若手工写了 `{\"a\":1}`(带反斜杠),那反斜杠也是字面字符,`JSON.parse` 会失败——这是**正确的**行为(报错提示用户去掉转义),而非需要我们去转。
 
-## 6. 自动播放 / 手动播放
+## 6. 自动播报 / 手动合成
 
-- **autoplay = true**:TTS 结果生成后自动推送给前端自动播放。
-- **autoplay = false**:前端显示播放按钮,用户点击手动播放。
-- 播放由 Consumer(前端)实现;TTS Provider 只负责「文本→音频字节」,不感知播放。
+**现状(纯插件,不入侵 dsh 源码):**
 
-> **前端播放挂接点仍是最大成本点(保留待办)**:dsh 目前无现成 audio/tts 能力,前端集成需新建。实现时先调研 dsh 的 web-app / interaction seam,确定音频字节如何送达前端并触发播放。这不是文档研究能解决的,须在代码库中确认。
+- **autoplay = true**:监听 `session/event` 的 `turn/end`(`dsh-session` 公开事件,`agent-instructions` 同款接缝),每轮结束提取该 turn 最后一条带可见文本的 `assistant/message`,走双语管线合成并**写音频文件** `dsh-voice-tts-turn-<n>.<format>` 到会话 cwd。合成失败仅 `logger.warn`,不阻断会话。
+- **autoplay = false**:不自动合成;用 `/dsh-voice-tts speak <text>` 手动合成。
+
+**缺口(需改 dsh 源码,超出「不入侵」边界):**
+
+「合成成文件」不等于「浏览器发声」。dsh web 目前**没有音频播放接缝**——`@deepseek-ai/dsh-attachment` 明确仅支持 image(PNG/JPEG/WebP/GIF),其「Known Limitations」写明 audio/video 是 deferred;`packages/client` 内 `audio`/`play(` 零命中。要把音频送进网页自动播放,必须新建一个 audio seam(后端持久化 + 前端 `<audio>` 播放),这是 dsh 本体改动,不属于本 bundle。
+
+因此「每轮最后回复是否会被**播报**」当前的可测边界是:**会被**合成(文件落地)、**不会被**浏览器自动发声。若要做后者,需在 dsh 侧新增 audio 能力(另立需求)。
 
 ## 7. 双语播报(bilingual)
 
@@ -234,7 +239,7 @@ volcengine 音色列表已整理为权威参考:
 1. ~~seam 三段式是否拆 3 个包~~ → **首版合包**(见 §2),日后再按需拆。
 2. ~~volcengine 具体 config schema~~ → **已定**(见 §3.1 / §4.1),字段与取值范围来自 `api-unidirectional-http.md`。
 3. ~~默认音色~~ → **`zh_female_vv_uranus_bigtts`(Vivi 2.0,2.0 标准首个通用女声)**。用户可改。
-4. **前端播放挂接点**(自动/手动)——仍待办,实现时调研 dsh 前端 seam。
+4. **浏览器发声(音频播放)**——仍待办:需 dsh 侧新建 audio seam(attachment 仅 image、client 无 audio),超出本 bundle「不入侵 dsh 源码」边界。已交付「turn 结束自动合成写文件」作为后端半程。
 5. ~~JSON 转义探针结论~~ → **已定**:`rawInput` 字面值,直接 `JSON.parse`(见 §5)。
 6. ~~是否提供 model-facing 的 TTS tool~~ → **首版仅人工命令触发**,不做 model tool(见 §10)。
 
@@ -259,3 +264,4 @@ volcengine 音色列表已整理为权威参考:
 7. `/dsh-voice-tts list-voices volcengine` 列出音色(场景/音色名/voice_type/语言/是否支持指令)。
 8. provider 选择、普通配置走 settings,热更新生效。
 9. `/dsh-voice-tts speak <双语文本>` 按 §7 语义:切句→判定语言→`bilingual` 过滤(混合句永远读)→按 `voices` 分配音色→相邻同音色合并→拼接输出;`bilingual=english_only` 时纯中文句被跳过。
+10. `autoplay=true` 时,`turn/end` 触发:提取该 turn 最终可见 assistant 文本(跳过 tool-call-only 消息)→ 双语管线合成 → 写 `dsh-voice-tts-turn-<n>.<format>` 文件;`autoplay=false` 时不合成。

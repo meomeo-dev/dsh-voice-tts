@@ -4,7 +4,9 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
 
 ## 状态
 
-**首版已实现(可运行)**:capability seam 三段式 + volcengine provider + `/dsh-voice-tts` 命令 + bilingual 双语播报。**「每轮 turn 最后回复自动播报」尚未实现**(设计 §6 的前端播放挂接点是待办)。
+**首版已实现(可运行)**:capability seam 三段式 + volcengine provider + `/dsh-voice-tts` 命令 + bilingual 双语播报 + **turn-final 自动合成**(`autoplay=true` 时每轮结束把最终回复合成成音频文件)。
+
+**「浏览器自动发声」尚未实现**:dsh web 无 audio 接缝(attachment 仅 image、client 无 audio),需 dsh 本体新增,超出本 bundle「不入侵 dsh 源码」边界。见 [docs/design.md §6](docs/design.md)。
 
 ## 定位
 
@@ -24,12 +26,13 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
   - `config --json <json>` — 覆盖 provider 配置
   - `speak <text>` — 合成文本为音频并写盘
 - **bilingual 双语播报**:按句切分判定 `zh`/`en`/`mixed`,按 `bilingual=both|english_only|chinese_only` 过滤(混合句永远整句读),`voices:{zh,en,mixed}` 多音色。
+- **turn-final 自动合成**:`autoplay=true` 时,监听 `session/event` 的 `turn/end`,每轮结束提取最终 assistant 文本合成写文件(纯插件,不改 dsh 源码)。
 
 ## 配置
 
 ```yaml
 voice-tts:
-  autoplay: false          # 预留;turn-final 自动播报未实现
+  autoplay: false          # true=每轮结束自动合成最终回复写文件;false=仅手动 speak
   provider: volcengine
   providers:
     volcengine:

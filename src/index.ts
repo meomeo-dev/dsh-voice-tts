@@ -1,8 +1,10 @@
 /**
  * dsh-voice-tts 插件入口:capability seam 的编排层。
- * 注册 `ctx.tts` Service Definition,挂载 volcengine Provider,并在 settings 存在时
- * 注册 `voice-tts` 设置命名空间与 `/dsh-voice-tts` 命令(Consumer)。
- * 纯逻辑(命令解析、请求构造、响应解析)在 `command.ts` / `volcengine.ts`,本文件只做接缝编排。
+ * 注册 `ctx.tts` Service Definition,挂载 volcengine Provider;在 settings 存在时
+ * 注册 `voice-tts` 设置命名空间与 `/dsh-voice-tts` 命令(Consumer);
+ * 并监听 `session/event` 的 `turn/end`,在 autoplay=true 时合成每轮最终回复。
+ * 纯逻辑(命令解析、请求构造、响应解析、双语规划、turn 文本提取)在
+ * `command.ts` / `volcengine.ts` / `bilingual.ts` / `turn-final.ts`,本文件只做接缝编排。
  * @module dsh-voice-tts
  */
 
@@ -13,11 +15,14 @@ import z from '@deepseek-ai/schemastery'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type { SettingsScope } from '@deepseek-ai/dsh-settings'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
+import type {} from '@deepseek-ai/dsh-session'
 import { TtsService } from './service.js'
 import { VolcengineTtsProvider } from './provider-volcengine.js'
 import { DEFAULT_VOICE_TYPE } from './volcengine.js'
 import type { VoiceTtsSettings } from './types.js'
 import { concatAudio, planBilingualSpeech } from './bilingual.js'
+import { finalAssistantText } from './turn-final.js'
+import type { TurnEventLike } from './turn-final.js'
 import {
   filterVoices,
   listVoicesText,
@@ -57,6 +62,26 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
   }),
 })
 
+/** settings 未挂载 / 未写入时的兜底设置(与 schema 默认一致)。 */
+const DEFAULT_SETTINGS: VoiceTtsSettings = {
+  autoplay: false,
+  provider: 'volcengine',
+  providers: {
+    volcengine: {
+      voice_type: DEFAULT_VOICE_TYPE,
+      resource_id: 'seed-tts-2.0',
+      model: '',
+      format: 'mp3',
+      sample_rate: 24000,
+      speech_rate: 0,
+      loudness_rate: 0,
+      pitch: 0,
+      bilingual: 'both',
+      voices: {},
+    },
+  },
+}
+
 /** 安全地转成可读字符串。 */
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -74,6 +99,30 @@ function parseJsonOrThrow(json: string): Record<string, unknown> {
     throw new Error('config JSON must be an object')
   }
   return parsed as Record<string, unknown>
+}
+
+/**
+ * 按当前配置把文本合成为音频字节(双语规划 + 分片合成 + 拼接)。
+ * @param tts - TTS 注册表。
+ * @param settings - 已解析设置。
+ * @param text - 待合成文本。
+ * @returns 拼接后的音频字节。
+ */
+async function synthesizeSpeech(tts: TtsService, settings: VoiceTtsSettings, text: string): Promise<Uint8Array> {
+  const volc = settings.providers.volcengine
+  const plan = planBilingualSpeech(text, volc)
+  if (plan.runs.length === 0) {
+    throw new Error(`no speechable sentences after bilingual=${volc.bilingual} filter`)
+  }
+  const parts: Uint8Array[] = []
+  for (const run of plan.runs) {
+    const result = await tts.synthesize(settings.provider, {
+      text: run.text,
+      config: { ...volc, voice_type: run.voice },
+    })
+    parts.push(result.audio)
+  }
+  return concatAudio(parts)
 }
 
 /**
@@ -117,32 +166,12 @@ async function executeTtsCommand(
     case 'speak': {
       if (command.text.length === 0) return { kind: 'error', text: 'usage: /dsh-voice-tts speak <text>' }
       const settings = scope.get()
-      const volc = settings.providers.volcengine
-      const plan = planBilingualSpeech(command.text, volc)
-      if (plan.runs.length === 0) {
-        return {
-          kind: 'error',
-          text: `no speechable sentences after bilingual=${volc.bilingual} filter (total ${plan.total} sentences)`,
-        }
-      }
       try {
-        const parts: Uint8Array[] = []
-        for (const run of plan.runs) {
-          const result = await tts.synthesize(settings.provider, {
-            text: run.text,
-            config: { ...volc, voice_type: run.voice },
-          })
-          parts.push(result.audio)
-        }
-        const audio = concatAudio(parts)
+        const audio = await synthesizeSpeech(tts, settings, command.text)
         const cwd = invocation.agent.session.header.cwd ?? process.cwd()
-        const outPath = resolve(cwd, `dsh-voice-tts-output.${volc.format}`)
+        const outPath = resolve(cwd, `dsh-voice-tts-output.${settings.providers.volcengine.format}`)
         writeFileSync(outPath, audio)
-        const langSummary = `zh=${plan.byLang.zh} en=${plan.byLang.en} mixed=${plan.byLang.mixed}`
-        return {
-          kind: 'success',
-          text: `synthesized ${plan.spoken}/${plan.total} sentences (${langSummary}) in ${plan.runs.length} run(s), ${audio.byteLength} bytes -> ${outPath}`,
-        }
+        return { kind: 'success', text: `synthesized ${audio.byteLength} bytes -> ${outPath}` }
       } catch (error) {
         return { kind: 'error', text: `synthesis failed: ${describeError(error)}` }
       }
@@ -152,7 +181,8 @@ async function executeTtsCommand(
 
 /**
  * 插件入口:注册 `ctx.tts`(Service Definition)+ volcengine Provider(始终);
- * 在 settings 存在时注册 `voice-tts` 命名空间与 `/dsh-voice-tts` 命令(Consumer)。
+ * 在 settings 存在时注册 `voice-tts` 命名空间与 `/dsh-voice-tts` 命令(Consumer);
+ * 监听 `turn/end` 在 autoplay=true 时合成每轮最终回复(写音频文件)。
  * @param ctx - Cordis 上下文。
  */
 export function apply(ctx: Context): void {
@@ -162,9 +192,35 @@ export function apply(ctx: Context): void {
   // Provider —— 首版仅 volcengine。
   ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider()), 'volcengine provider')
 
-  // Consumer —— settings 可选;存在时挂命令。
+  // 当前生效设置(settings 挂载前为默认,挂载后随 watch 更新)。
+  let activeSettings: VoiceTtsSettings = DEFAULT_SETTINGS
+
+  // turn-final 自动合成:autoplay=true 时,每轮结束把最终回复合成到音频文件。
+  ctx.on('session/event', (session, event) => {
+    if (event.type !== 'turn/end') return
+    if (!activeSettings.autoplay) return
+    const text = finalAssistantText(session.events as readonly TurnEventLike[], event.data.turn)
+    if (text === undefined) return
+    const settings = activeSettings
+    void synthesizeSpeech(tts, settings, text)
+      .then(audio => {
+        const cwd = session.header.cwd ?? process.cwd()
+        const outPath = resolve(cwd, `dsh-voice-tts-turn-${event.data.turn}.${settings.providers.volcengine.format}`)
+        writeFileSync(outPath, audio)
+        ctx.logger.info('dsh-voice-tts: turn %d synthesized %d bytes -> %s', event.data.turn, audio.byteLength, outPath)
+      })
+      .catch(error => {
+        ctx.logger.warn('dsh-voice-tts: turn-final synthesis failed: %s', describeError(error))
+      })
+  })
+
+  // Consumer —— settings 可选;存在时接管 activeSettings 并挂命令。
   ctx.inject(['settings'], (sctx) => {
     const scope = sctx.settings.register(NAMESPACE, SCHEMA)
+    activeSettings = scope.get()
+    scope.watch(next => {
+      activeSettings = next
+    })
     ctx.commands.register({
       name: 'dsh-voice-tts',
       description: 'text-to-speech synthesis and config (volcengine seed-tts-2.0)',
