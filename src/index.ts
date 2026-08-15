@@ -401,7 +401,15 @@ async function executeTtsCommand(
       if (panelToken === undefined || panelPort === undefined) {
         return { kind: 'error', text: 'voice-tts panel is not available: this session has no webServer/connection (web mode only).' }
       }
-      return { kind: 'success', text: `voice-tts panel (展开后复制 URL): ${panelUrl(panelPort, panelToken)}` }
+      // 命令卡片只在结果含换行时可展开/复制(GenericCommandCard 的 expandable 判定);
+      // 卡片是纯文本渲染,故用裸 URL 而非 markdown 链接语法。
+      return {
+        kind: 'success',
+        text: [
+          'voice-tts 配置面板 (展开后复制 URL):',
+          `  配置面板: ${panelUrl(panelPort, panelToken)}`,
+        ].join('\n'),
+      }
     }
   }
 }
