@@ -149,18 +149,26 @@ function parseLine(line: string): { data: string; textWords: number | undefined 
  * @throws 当任一行 `code` 非成功码、或行非 JSON、或无音频时抛错。
  */
 export function parseVolcengineStream(text: string, format: string): TtsResult {
-  const chunks: string[] = []
+  const parts: Uint8Array[] = []
   let textWords = 0
   for (const line of text.split('\n')) {
     if (line.trim().length === 0) continue
     const parsed = parseLine(line)
-    if (parsed.data.length > 0) chunks.push(parsed.data)
+    // 每个分片是独立 base64 编码、末尾可能带 `=` padding;必须单独解码再拼字节,
+    // 不能 join base64 字符串后一次性解码(中间的 `=` 会让解码提前停止)。
+    if (parsed.data.length > 0) parts.push(Uint8Array.from(Buffer.from(parsed.data, 'base64')))
     if (parsed.textWords !== undefined) textWords = parsed.textWords
   }
-  if (chunks.length === 0) {
+  if (parts.length === 0) {
     throw new Error('volcengine TTS returned no audio data')
   }
-  const audio = Uint8Array.from(Buffer.from(chunks.join(''), 'base64'))
+  const total = parts.reduce((sum, part) => sum + part.byteLength, 0)
+  const audio = new Uint8Array(total)
+  let offset = 0
+  for (const part of parts) {
+    audio.set(part, offset)
+    offset += part.byteLength
+  }
   return { audio, format, textWords }
 }
 

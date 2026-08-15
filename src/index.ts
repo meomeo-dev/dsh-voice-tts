@@ -187,6 +187,7 @@ async function deliverSpeech(
   baseName: string,
   text: string,
   delivery: VoiceTtsSettings['delivery'],
+  warn: (line: string) => void = () => {},
 ): Promise<DeliveryOutcome> {
   const volc = settings.providers.volcengine
   if (delivery === 'off') {
@@ -202,7 +203,9 @@ async function deliverSpeech(
     const audio = await synthesizeSpeech(tts, settings, text, volc.play_format)
     const path = resolve(cwd, `${baseName}.${volc.play_format}`)
     writeFileSync(path, audio)
-    const child = playFile({ path, format: volc.play_format })
+    const child = playFile({ path, format: volc.play_format }, error => {
+      warn(`host_play failed: ${error.message}`)
+    })
     return { audio, path, played: child !== undefined, format: volc.play_format }
   }
   const audio = await synthesizeSpeech(tts, settings, text)
@@ -289,7 +292,7 @@ export function apply(ctx: Context): void {
     const text = finalAssistantText(session.events as readonly TurnEventLike[], event.data.turn)
     if (text === undefined) return
     const cwd = session.header.cwd ?? process.cwd()
-    void deliverSpeech(tts, settings, cwd, `dsh-voice-tts-turn-${event.data.turn}`, text, settings.delivery)
+    void deliverSpeech(tts, settings, cwd, `dsh-voice-tts-turn-${event.data.turn}`, text, settings.delivery, line => ctx.logger.warn('dsh-voice-tts: %s', line))
       .then(outcome => {
         const played = outcome.played ? ' (played)' : ''
         ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', event.data.turn, outcome.audio.byteLength, outcome.format, played, outcome.path)

@@ -38,9 +38,9 @@ export function resolvePlayer(platform: NodeJS.Platform = process.platform): { b
 
 /**
  * 非阻塞播放一个音频文件。返回子进程句柄;找不到平台播放器时返回 undefined。
- * 播放失败不抛出(后台播放不应影响会话),错误交给可选的 `onError` 回调。
+ * 播放失败不抛出(后台播放不应影响会话),错误与退出码交给可选的 `onError` 回调。
  * @param file - 待播放文件。
- * @param onError - 可选错误回调。
+ * @param onError - 可选错误回调,收到 spawn 失败、非零退出码或 stderr 内容。
  * @returns 子进程句柄;无匹配播放器则 undefined。
  */
 export function playFile(
@@ -52,9 +52,19 @@ export function playFile(
     onError?.(new Error(`no system player for platform "${process.platform}"`))
     return undefined
   }
-  const child = spawn(player.bin, player.args(file.path), { stdio: 'ignore' })
+  // 捕获 stderr 与退出码:无声失败(spawn 失败、播放器报错)必须可见,不能静默吞掉。
+  const child = spawn(player.bin, player.args(file.path), { stdio: ['ignore', 'ignore', 'pipe'] })
+  let stderr = ''
+  child.stderr.on('data', chunk => {
+    stderr += String(chunk)
+  })
   child.on('error', error => {
     onError?.(error)
+  })
+  child.on('exit', (code, signal) => {
+    if (code !== 0 || stderr.trim().length > 0) {
+      onError?.(new Error(`player ${player.bin} exited code=${String(code)} signal=${String(signal)} stderr=${stderr.trim()}`))
+    }
   })
   return child
 }

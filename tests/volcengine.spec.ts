@@ -86,6 +86,18 @@ describe('parseVolcengineStream', () => {
     expect(() => parseVolcengineStream(JSON.stringify({ code: 0, message: '' }), 'mp3'))
       .toThrow('no audio data')
   })
+
+  it('decodes each chunk independently (padding must not truncate later chunks)', () => {
+    // 2 字节的原始数据 → base64 带 1 个 `=` padding。若 join 后一次性解码,
+    // 第一个 `=` 会让后续分片丢失(回归:wav 合成被截断成 0.34s 的根因)。
+    const text = [
+      JSON.stringify({ code: 0, data: Buffer.from([0x41, 0x42]).toString('base64') }),
+      JSON.stringify({ code: 0, data: Buffer.from([0x43, 0x44]).toString('base64') }),
+      JSON.stringify({ code: 20000000, message: 'OK', data: null }),
+    ].join('\n')
+    const result = parseVolcengineStream(text, 'wav')
+    expect([...result.audio]).toEqual([0x41, 0x42, 0x43, 0x44])
+  })
 })
 
 describe('synthesizeVolcengine', () => {
