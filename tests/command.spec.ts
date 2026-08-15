@@ -50,6 +50,10 @@ describe('parseTtsCommand', () => {
     expect(parseTtsCommand('speak 你好，世界')).toEqual({ kind: 'speak', text: '你好，世界' })
   })
 
+  it('parses ui', () => {
+    expect(parseTtsCommand('ui')).toEqual({ kind: 'ui' })
+  })
+
   it('falls back to help for unknown subcommands', () => {
     expect(parseTtsCommand('bogus')).toEqual({ kind: 'help' })
     expect(parseTtsCommand('config --nope')).toEqual({ kind: 'help' })

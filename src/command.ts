@@ -70,6 +70,8 @@ export function parseTtsCommand(rawInput: string): TtsCommand {
       }
       return { kind: 'speak', text: rest }
     }
+    case 'ui':
+      return { kind: 'ui' }
     default:
       return { kind: 'help' }
   }
