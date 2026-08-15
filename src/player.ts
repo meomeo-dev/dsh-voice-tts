@@ -68,3 +68,66 @@ export function playFile(
   })
   return child
 }
+
+/**
+ * 播放一个音频文件并在**播放结束后**才 resolve(退出码 0 且无 stderr)。
+ * 无匹配平台播放器、spawn 失败、非零退出码或 stderr 均 reject。
+ * 供串行队列(见 {@link PlayerQueue})等待一条播完再播下一条。
+ * @param file - 待播放文件。
+ * @param platform - 平台覆盖(单测用),默认当前平台。
+ * @param spawnImpl - spawn 实现覆盖(单测用)。
+ * @returns 播放完成(或失败)的 Promise。
+ */
+export function playFileToCompletion(
+  file: PlayableFile,
+  platform: NodeJS.Platform = process.platform,
+  spawnImpl: typeof spawn = spawn,
+): Promise<void> {
+  const player = resolvePlayer(platform)
+  if (player === undefined) {
+    return Promise.reject(new Error(`no system player for platform "${platform}"`))
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl(player.bin, player.args(file.path), { stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderr = ''
+    child.stderr.on('data', chunk => {
+      stderr += String(chunk)
+    })
+    child.on('error', reject)
+    child.on('exit', (code, signal) => {
+      if (code === 0 && stderr.trim().length === 0) {
+        resolve()
+      } else {
+        reject(new Error(`player ${player.bin} exited code=${String(code)} signal=${String(signal)} stderr=${stderr.trim()}`))
+      }
+    })
+  })
+}
+
+/**
+ * 串行播放队列:一次只播一个音频文件,前一条播完(或失败)才播下一条。
+ * 解决多个会话 / 多个 turn 并发触发 host_play 时系统播放器被抢占、音频重叠的问题。
+ */
+export class PlayerQueue {
+  /** 队尾 Promise:新播放项链在它之后,保证 FIFO 串行。 */
+  private tail: Promise<void> = Promise.resolve()
+
+  /**
+   * 入队播放一个文件。立即返回本条播放的 Promise(resolve/reject 在该条播完时),
+   * 实际发声时刻取决于队列里前面的项。
+   * @param file - 待播放文件。
+   * @param platform - 平台覆盖(单测用)。
+   * @param spawnImpl - spawn 实现覆盖(单测用)。
+   * @returns 本条播放完成(或失败)的 Promise。
+   */
+  enqueue(
+    file: PlayableFile,
+    platform: NodeJS.Platform = process.platform,
+    spawnImpl: typeof spawn = spawn,
+  ): Promise<void> {
+    const run = this.tail.then(() => playFileToCompletion(file, platform, spawnImpl))
+    // 用 catch 保活队尾:某条失败不影响后续条目的调度。
+    this.tail = run.catch(() => {})
+    return run
+  }
+}

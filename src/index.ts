@@ -26,7 +26,8 @@ import type { BilingualVoiceConfig, VoiceTtsSettings } from './types.js'
 import { concatAudio, planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
 import type { TurnEventLike } from './turn-final.js'
-import { playFile } from './player.js'
+import { PlayerQueue } from './player.js'
+import { sanitizeForSpeech } from './sanitize.js'
 import {
   filterVoices,
   listVoicesText,
@@ -306,6 +307,7 @@ async function deliverSpeech(
   text: string,
   delivery: VoiceTtsSettings['delivery'],
   voiceId: string | undefined,
+  playerQueue: PlayerQueue,
   warn: (line: string) => void = () => {},
 ): Promise<DeliveryOutcome> {
   const view = deliveryView(settings)
@@ -322,10 +324,11 @@ async function deliverSpeech(
     const audio = await synthesizeSpeech(tts, settings, text, view.play_format, voiceId)
     const path = resolve(cwd, `${baseName}.${view.play_format}`)
     writeFileSync(path, audio)
-    const child = playFile({ path, format: view.play_format }, error => {
+    // 串行播放队列:一次只播一个,避免多会话/多 turn 并发抢占系统播放器。
+    void playerQueue.enqueue({ path, format: view.play_format }).catch(error => {
       warn(`host_play failed: ${error.message}`)
     })
-    return { audio, path, played: child !== undefined, format: view.play_format }
+    return { audio, path, played: true, format: view.play_format }
   }
   const audio = await synthesizeSpeech(tts, settings, text, view.format, voiceId)
   const path = resolve(cwd, `${baseName}.${view.format}`)
@@ -345,6 +348,7 @@ async function executeTtsCommand(
   scope: SettingsScope<VoiceTtsSettings>,
   invocation: CommandInvocation,
   resolveVoiceId: () => string | undefined,
+  playerQueue: PlayerQueue,
 ): Promise<CommandResult> {
   const command = parseTtsCommand(invocation.rawInput)
 
@@ -386,7 +390,7 @@ async function executeTtsCommand(
       const delivery = command.delivery ?? settings.delivery
       try {
         const cwd = invocation.agent.session.header.cwd ?? process.cwd()
-        const outcome = await deliverSpeech(tts, settings, cwd, 'dsh-voice-tts-output', command.text, delivery, resolveVoiceId())
+        const outcome = await deliverSpeech(tts, settings, cwd, 'dsh-voice-tts-output', command.text, delivery, resolveVoiceId(), playerQueue)
         const played = outcome.played ? ' (played)' : ''
         return { kind: 'success', text: `synthesized ${outcome.audio.byteLength} bytes (${outcome.format})${played} -> ${outcome.path}` }
       } catch (error) {
@@ -562,15 +566,23 @@ export function apply(ctx: Context): void {
   ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider(() => resolveApiKey('volcengine'))), 'volcengine provider')
   ctx.effect(() => tts.registerProvider(new SiliconflowTtsProvider(() => resolveApiKey('siliconflow-cn'))), 'siliconflow-cn provider')
 
+  // 串行播放队列:所有 host_play 经它排队,一次只播一个。
+  const playerQueue = new PlayerQueue()
+
   // turn-final 交付:delivery=off 不处理;否则每轮结束把最终回复按 delivery 交付。
   ctx.on('session/event', (session, event) => {
     if (event.type !== 'turn/end') return
     const settings = activeSettings
     if (settings.delivery === 'off') return
-    const text = finalAssistantText(session.events as readonly TurnEventLike[], event.data.turn)
-    if (text === undefined) return
+    const raw = finalAssistantText(session.events as readonly TurnEventLike[], event.data.turn)
+    if (raw === undefined) return
+    // markdown/HTML/代码块先净化为可朗读文本:代码块不读,整段代码/JSON/SQL/YAML 不读。
+    const text = sanitizeForSpeech(raw)
+    if (text.length === 0) return
     const cwd = session.header.cwd ?? process.cwd()
-    void deliverSpeech(tts, settings, cwd, `dsh-voice-tts-turn-${event.data.turn}`, text, settings.delivery, resolveVoiceId(), line => ctx.logger.warn('dsh-voice-tts: %s', line))
+    // 文件名带 session id + turn,避免多会话同 cwd 下同名覆盖、互相抢占。
+    const baseName = `dsh-voice-tts-${String(session.id)}-turn-${event.data.turn}`
+    void deliverSpeech(tts, settings, cwd, baseName, text, settings.delivery, resolveVoiceId(), playerQueue, line => ctx.logger.warn('dsh-voice-tts: %s', line))
       .then(outcome => {
         const played = outcome.played ? ' (played)' : ''
         ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', event.data.turn, outcome.audio.byteLength, outcome.format, played, outcome.path)
@@ -592,7 +604,7 @@ export function apply(ctx: Context): void {
       name: 'dsh-voice-tts',
       description: 'text-to-speech synthesis and config (volcengine seed-tts-2.0)',
       input: { hint: '[status|list-voices|config|speak|ui]' },
-      handler: invocation => executeTtsCommand(tts, scope, invocation, resolveVoiceId),
+      handler: invocation => executeTtsCommand(tts, scope, invocation, resolveVoiceId, playerQueue),
     })
   })
 
