@@ -85,7 +85,7 @@ function StatusStrip(props: { status: Status }): JSX.Element {
 }
 
 /** 凭证(KEY NAME + 值)管理区:值走 credentials,KEY NAME 是父级 apiKeyRef 字段。 */
-function CredentialSection(props: { bootstrap: Bootstrap; ref: string }): JSX.Element {
+function CredentialSection(props: { bootstrap: Bootstrap; keyRef: string }): JSX.Element {
   const [value, setValue] = useState('')
   const [status, setStatus] = useState<KeyStatus | null>(null)
   const [banner, setBanner] = useState<{ kind: 'ok' | 'error'; text: string } | undefined>(undefined)
@@ -93,35 +93,35 @@ function CredentialSection(props: { bootstrap: Bootstrap; ref: string }): JSX.El
   useEffect(() => {
     setStatus(null)
     setBanner(undefined)
-    if (props.ref.trim().length === 0) return
-    rpc<{ key: KeyStatus }>(props.bootstrap, 'key-status', { ref: props.ref })
+    if (props.keyRef.trim().length === 0) return
+    rpc<{ key: KeyStatus }>(props.bootstrap, 'key-status', { ref: props.keyRef })
       .then(v => setStatus(v.key))
       .catch((err: unknown) => setBanner({ kind: 'error', text: err instanceof Error ? err.message : String(err) }))
-  }, [props.bootstrap, props.ref])
+  }, [props.bootstrap, props.keyRef])
 
   const setKey = useCallback(async (): Promise<void> => {
     try {
-      await rpc(props.bootstrap, 'key-set', { ref: props.ref, value })
+      await rpc(props.bootstrap, 'key-set', { ref: props.keyRef, value })
       setValue('')
-      const next = await rpc<{ key: KeyStatus }>(props.bootstrap, 'key-status', { ref: props.ref })
+      const next = await rpc<{ key: KeyStatus }>(props.bootstrap, 'key-status', { ref: props.keyRef })
       setStatus(next.key)
       setBanner({ kind: 'ok', text: 'API key 已保存 (stored)' })
     } catch (err) {
       setBanner({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
-  }, [props.bootstrap, props.ref, value])
+  }, [props.bootstrap, props.keyRef, value])
 
   const unset = useCallback(async (): Promise<void> => {
     try {
-      await rpc(props.bootstrap, 'key-unset', { ref: props.ref })
+      await rpc(props.bootstrap, 'key-unset', { ref: props.keyRef })
       setValue('')
-      const next = await rpc<{ key: KeyStatus }>(props.bootstrap, 'key-status', { ref: props.ref })
+      const next = await rpc<{ key: KeyStatus }>(props.bootstrap, 'key-status', { ref: props.keyRef })
       setStatus(next.key)
       setBanner({ kind: 'ok', text: 'API key 已删除 (removed)' })
     } catch (err) {
       setBanner({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
-  }, [props.bootstrap, props.ref])
+  }, [props.bootstrap, props.keyRef])
 
   return (
     <div className="credential">
@@ -133,7 +133,7 @@ function CredentialSection(props: { bootstrap: Bootstrap; ref: string }): JSX.El
       </div>
       <div className="key-actions">
         <input type="password" value={value} onChange={e => setValue(e.target.value)} placeholder="输入新 key(不回显)" autoComplete="off" />
-        <button type="button" className="primary" disabled={value.length === 0 || props.ref.trim().length === 0} onClick={() => void setKey()}>保存 key</button>
+        <button type="button" className="primary" disabled={value.length === 0 || props.keyRef.trim().length === 0} onClick={() => void setKey()}>保存 key</button>
         <button type="button" className="refresh danger" onClick={() => void unset()}>清除 key</button>
       </div>
     </div>
@@ -211,7 +211,7 @@ function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; li
     <div className="card provider-card">
       <div className="section-title">volcengine (seed-tts-2.0)</div>
       <KeyNameField value={cfg.apiKeyRef} onChange={next => set({ apiKeyRef: next })} />
-      <CredentialSection bootstrap={props.bootstrap} ref={cfg.apiKeyRef} />
+      <CredentialSection bootstrap={props.bootstrap} keyRef={cfg.apiKeyRef} />
       <BilingualFields cfg={cfg} listId={props.listId} onChange={patch => set(patch)} />
       <div className="field-row">
         <label className="field">
@@ -262,7 +262,7 @@ function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; 
     <div className="card provider-card">
       <div className="section-title">siliconflow-cn (CosyVoice2 / MOSS-TTSD)</div>
       <KeyNameField value={cfg.apiKeyRef} onChange={next => set({ apiKeyRef: next })} />
-      <CredentialSection bootstrap={props.bootstrap} ref={cfg.apiKeyRef} />
+      <CredentialSection bootstrap={props.bootstrap} keyRef={cfg.apiKeyRef} />
       <BilingualFields cfg={cfg} listId={props.listId} onChange={patch => set(patch)} />
       <div className="field-row">
         <label className="field">
