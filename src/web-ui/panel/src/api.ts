@@ -85,6 +85,8 @@ export interface Voice {
   readonly voice_type: string
   readonly name: string
   readonly lang: string
+  /** 归属表:`standard` / `multilingual`(用于下拉分组)。 */
+  readonly group?: string
 }
 
 /** API key 只读状态(镜像 host 侧 PanelKeyStatus)。 */

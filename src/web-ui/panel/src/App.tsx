@@ -15,6 +15,9 @@ const BILINGUAL_OPTIONS = ['both', 'english_only', 'chinese_only'] as const
 const LANG_KEYS = ['zh', 'en', 'mixed'] as const
 const PROVIDERS = ['volcengine', 'siliconflow-cn'] as const
 
+/** 音色 `group` → 下拉分组名。 */
+const GROUP_LABEL: Record<string, string> = { standard: '标准', multilingual: '多语种' }
+
 /** 已知凭证引用名(KEY NAME)下拉候选。 */
 const KNOWN_KEY_NAMES = ['VOLCENGINE_TTS_API_KEY', 'SILICONFLOW_API_KEY', 'DEEPSEEK_API_KEY'] as const
 
@@ -46,22 +49,41 @@ function rowsToProfiles(rows: readonly ProfileRow[]): Record<string, Voices> {
   return out
 }
 
-/** 一个带 datalist 的音色输入框(与 .field 一致:key + 中文说明)。 */
+/** 一个音色下拉框(与 .field 一致:key + 中文说明)。用 `<select>` 而非 `<input list>`:
+ * 后者按当前值过滤建议,非空字段(如 voice_type)点击时下拉会被滤空,看似「点不开」。 */
 function VoiceField(props: {
   value: string
-  listId: string
+  voices: readonly Voice[]
   label: string
   desc?: string
   placeholder?: string
   onChange: (next: string) => void
 }): JSX.Element {
+  // 按 group 分组(volcengine: standard / multilingual),便于浏览。
+  const groups = new Map<string, Voice[]>()
+  for (const voice of props.voices) {
+    const group = voice.group ?? 'standard'
+    const list = groups.get(group)
+    if (list === undefined) groups.set(group, [voice])
+    else list.push(voice)
+  }
+  // 当前值不在音色表里时补一条,避免 select 显示空白、静默丢值。
+  const custom = props.value.trim().length > 0 && !props.voices.some(v => v.voice_type === props.value)
   return (
     <label className="voice-field">
       <span className="field-head">
         <span className="mono key">{props.label}</span>
         {props.desc !== undefined && <span className="desc">{props.desc}</span>}
       </span>
-      <input type="text" list={props.listId} value={props.value} placeholder={props.placeholder ?? ''} onChange={e => props.onChange(e.target.value)} />
+      <select value={props.value} onChange={e => props.onChange(e.target.value)}>
+        <option value="">{props.placeholder ?? '(未设置)'}</option>
+        {custom && <option value={props.value}>{props.value} (当前值)</option>}
+        {[...groups.entries()].map(([group, list]) => (
+          <optgroup key={group} label={GROUP_LABEL[group] ?? group}>
+            {list.map(v => <option key={v.voice_type} value={v.voice_type} title={v.voice_type}>{v.name}</option>)}
+          </optgroup>
+        ))}
+      </select>
     </label>
   )
 }
@@ -157,14 +179,14 @@ function KeyNameField(props: { value: string; onChange: (next: string) => void }
 /** 双语共享字段(voice_type / bilingual / voices / voice_profiles)。 */
 function BilingualFields(props: {
   cfg: { voice_type: string; bilingual: string; voices: Voices }
-  listId: string
+  voices: readonly Voice[]
   onChange: (patch: { voice_type?: string; bilingual?: 'both' | 'english_only' | 'chinese_only'; voices?: Voices }) => void
 }): JSX.Element {
   const { cfg } = props
   return (
     <>
       <div className="field-row">
-        <VoiceField listId={props.listId} label="voice_type" desc="默认音色" value={cfg.voice_type} onChange={next => props.onChange({ voice_type: next })} />
+        <VoiceField voices={props.voices} label="voice_type" desc="默认音色" value={cfg.voice_type} onChange={next => props.onChange({ voice_type: next })} />
         <label className="field">
           <span className="field-head"><span className="mono key">bilingual</span><span className="desc">双语播报过滤</span></span>
           <select value={cfg.bilingual} onChange={e => props.onChange({ bilingual: e.target.value as 'both' | 'english_only' | 'chinese_only' })}>
@@ -173,9 +195,9 @@ function BilingualFields(props: {
         </label>
       </div>
       <div className="field-row">
-        <VoiceField listId={props.listId} label="voices.zh" desc="中文音色" value={cfg.voices.zh ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, zh: next } })} />
-        <VoiceField listId={props.listId} label="voices.en" desc="英文音色" value={cfg.voices.en ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, en: next } })} />
-        <VoiceField listId={props.listId} label="voices.mixed" desc="混合音色" value={cfg.voices.mixed ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, mixed: next } })} />
+        <VoiceField voices={props.voices} label="voices.zh" desc="中文音色" value={cfg.voices.zh ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, zh: next } })} />
+        <VoiceField voices={props.voices} label="voices.en" desc="英文音色" value={cfg.voices.en ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, en: next } })} />
+        <VoiceField voices={props.voices} label="voices.mixed" desc="混合音色" value={cfg.voices.mixed ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, mixed: next } })} />
       </div>
     </>
   )
@@ -184,7 +206,7 @@ function BilingualFields(props: {
 /** voice_profiles 行编辑器。 */
 function ProfilesEditor(props: {
   profiles: Record<string, Voices>
-  listId: string
+  voices: readonly Voice[]
   onChange: (next: Record<string, Voices>) => void
 }): JSX.Element {
   const rows = profilesToRows(props.profiles)
@@ -196,9 +218,9 @@ function ProfilesEditor(props: {
         <div className="profile-row" key={index}>
           <input type="text" className="profile-id" placeholder="voice id (如 steve-jobs)" value={row.id}
             onChange={e => update(rows.map((r, i) => i === index ? { ...r, id: e.target.value } : r))} />
-          <VoiceField listId={props.listId} label="zh" value={row.zh} onChange={next => update(rows.map((r, i) => i === index ? { ...r, zh: next } : r))} />
-          <VoiceField listId={props.listId} label="en" value={row.en} onChange={next => update(rows.map((r, i) => i === index ? { ...r, en: next } : r))} />
-          <VoiceField listId={props.listId} label="mixed" value={row.mixed} onChange={next => update(rows.map((r, i) => i === index ? { ...r, mixed: next } : r))} />
+          <VoiceField voices={props.voices} label="zh" value={row.zh} onChange={next => update(rows.map((r, i) => i === index ? { ...r, zh: next } : r))} />
+          <VoiceField voices={props.voices} label="en" value={row.en} onChange={next => update(rows.map((r, i) => i === index ? { ...r, en: next } : r))} />
+          <VoiceField voices={props.voices} label="mixed" value={row.mixed} onChange={next => update(rows.map((r, i) => i === index ? { ...r, mixed: next } : r))} />
           <button type="button" className="refresh danger" onClick={() => update(rows.filter((_, i) => i !== index))}>删除</button>
         </div>
       ))}
@@ -208,7 +230,7 @@ function ProfilesEditor(props: {
 }
 
 /** volcengine provider 卡片。 */
-function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; listId: string; onChange: (next: VolcengineConfig) => void }): JSX.Element {
+function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; voices: readonly Voice[]; onChange: (next: VolcengineConfig) => void }): JSX.Element {
   const { cfg } = props
   const set = (patch: Partial<VolcengineConfig>): void => props.onChange({ ...cfg, ...patch })
   return (
@@ -216,7 +238,7 @@ function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; li
       <div className="section-title">volcengine (seed-tts-2.0)</div>
       <KeyNameField value={cfg.apiKeyRef} onChange={next => set({ apiKeyRef: next })} />
       <CredentialSection bootstrap={props.bootstrap} keyRef={cfg.apiKeyRef} />
-      <BilingualFields cfg={cfg} listId={props.listId} onChange={patch => set(patch)} />
+      <BilingualFields cfg={cfg} voices={props.voices} onChange={patch => set(patch)} />
       <div className="field-row">
         <label className="field">
           <span className="field-head"><span className="mono key">resource_id</span><span className="desc">模型版本</span></span>
@@ -253,13 +275,13 @@ function VolcengineCard(props: { bootstrap: Bootstrap; cfg: VolcengineConfig; li
         <label className="field"><span className="field-head"><span className="mono key">pitch</span><span className="desc">[-12,12] 音调</span></span>
           <input type="number" min={-12} max={12} value={cfg.pitch} onChange={e => set({ pitch: Number(e.target.value) || 0 })} /></label>
       </div>
-      <ProfilesEditor profiles={cfg.voice_profiles} listId={props.listId} onChange={next => set({ voice_profiles: next })} />
+      <ProfilesEditor profiles={cfg.voice_profiles} voices={props.voices} onChange={next => set({ voice_profiles: next })} />
     </div>
   )
 }
 
 /** siliconflow provider 卡片。 */
-function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; listId: string; onChange: (next: SiliconflowConfig) => void }): JSX.Element {
+function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; voices: readonly Voice[]; onChange: (next: SiliconflowConfig) => void }): JSX.Element {
   const { cfg } = props
   const set = (patch: Partial<SiliconflowConfig>): void => props.onChange({ ...cfg, ...patch })
   return (
@@ -267,7 +289,7 @@ function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; 
       <div className="section-title">siliconflow-cn (CosyVoice2 / MOSS-TTSD)</div>
       <KeyNameField value={cfg.apiKeyRef} onChange={next => set({ apiKeyRef: next })} />
       <CredentialSection bootstrap={props.bootstrap} keyRef={cfg.apiKeyRef} />
-      <BilingualFields cfg={cfg} listId={props.listId} onChange={patch => set(patch)} />
+      <BilingualFields cfg={cfg} voices={props.voices} onChange={patch => set(patch)} />
       <div className="field-row">
         <label className="field">
           <span className="field-head"><span className="mono key">model</span><span className="desc">TTS 模型 id</span></span>
@@ -294,7 +316,7 @@ function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; 
         <label className="field"><span className="field-head"><span className="mono key">gain</span><span className="desc">[-10,10] dB 增益</span></span>
           <input type="number" min={-10} max={10} step={0.1} value={cfg.gain} onChange={e => set({ gain: Number(e.target.value) || 0 })} /></label>
       </div>
-      <ProfilesEditor profiles={cfg.voice_profiles} listId={props.listId} onChange={next => set({ voice_profiles: next })} />
+      <ProfilesEditor profiles={cfg.voice_profiles} voices={props.voices} onChange={next => set({ voice_profiles: next })} />
     </div>
   )
 }
@@ -366,16 +388,10 @@ export function App(): JSX.Element {
             <span className="desc">保存 settings(不含 key 值;key 走下方各 provider 卡片)</span>
           </div>
         </div>
-        <VolcengineCard bootstrap={bootstrap} cfg={config.providers.volcengine} listId="voice-tts-voices-volcengine"
+        <VolcengineCard bootstrap={bootstrap} cfg={config.providers.volcengine} voices={voices.volcengine}
           onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, volcengine: next } })} />
-        <SiliconflowCard bootstrap={bootstrap} cfg={config.providers['siliconflow-cn']} listId="voice-tts-voices-siliconflow"
+        <SiliconflowCard bootstrap={bootstrap} cfg={config.providers['siliconflow-cn']} voices={voices['siliconflow-cn']}
           onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, 'siliconflow-cn': next } })} />
-        <datalist id="voice-tts-voices-volcengine">
-          {voices.volcengine.map(v => <option key={v.voice_type} value={v.voice_type}>{v.name} ({v.lang})</option>)}
-        </datalist>
-        <datalist id="voice-tts-voices-siliconflow">
-          {voices['siliconflow-cn'].map(v => <option key={v.voice_type} value={v.voice_type}>{v.name} ({v.lang})</option>)}
-        </datalist>
         <datalist id="voice-tts-key-names">
           {KNOWN_KEY_NAMES.map(name => <option key={name} value={name} />)}
         </datalist>
