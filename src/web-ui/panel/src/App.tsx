@@ -46,17 +46,21 @@ function rowsToProfiles(rows: readonly ProfileRow[]): Record<string, Voices> {
   return out
 }
 
-/** 一个带 datalist 的音色输入框。 */
+/** 一个带 datalist 的音色输入框(与 .field 一致:key + 中文说明)。 */
 function VoiceField(props: {
   value: string
   listId: string
   label: string
+  desc?: string
   placeholder?: string
   onChange: (next: string) => void
 }): JSX.Element {
   return (
     <label className="voice-field">
-      <span className="mono key">{props.label}</span>
+      <span className="field-head">
+        <span className="mono key">{props.label}</span>
+        {props.desc !== undefined && <span className="desc">{props.desc}</span>}
+      </span>
       <input type="text" list={props.listId} value={props.value} placeholder={props.placeholder ?? ''} onChange={e => props.onChange(e.target.value)} />
     </label>
   )
@@ -160,7 +164,7 @@ function BilingualFields(props: {
   return (
     <>
       <div className="field-row">
-        <VoiceField listId={props.listId} label="voice_type" value={cfg.voice_type} onChange={next => props.onChange({ voice_type: next })} />
+        <VoiceField listId={props.listId} label="voice_type" desc="默认音色" value={cfg.voice_type} onChange={next => props.onChange({ voice_type: next })} />
         <label className="field">
           <span className="field-head"><span className="mono key">bilingual</span><span className="desc">双语播报过滤</span></span>
           <select value={cfg.bilingual} onChange={e => props.onChange({ bilingual: e.target.value as 'both' | 'english_only' | 'chinese_only' })}>
@@ -169,9 +173,9 @@ function BilingualFields(props: {
         </label>
       </div>
       <div className="field-row">
-        <VoiceField listId={props.listId} label="voices.zh" value={cfg.voices.zh ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, zh: next } })} />
-        <VoiceField listId={props.listId} label="voices.en" value={cfg.voices.en ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, en: next } })} />
-        <VoiceField listId={props.listId} label="voices.mixed" value={cfg.voices.mixed ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, mixed: next } })} />
+        <VoiceField listId={props.listId} label="voices.zh" desc="中文音色" value={cfg.voices.zh ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, zh: next } })} />
+        <VoiceField listId={props.listId} label="voices.en" desc="英文音色" value={cfg.voices.en ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, en: next } })} />
+        <VoiceField listId={props.listId} label="voices.mixed" desc="混合音色" value={cfg.voices.mixed ?? ''} onChange={next => props.onChange({ voices: { ...cfg.voices, mixed: next } })} />
       </div>
     </>
   )
