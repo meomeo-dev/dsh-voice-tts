@@ -1,0 +1,7 @@
+# The dsh-voice-tts bundle layer: one insert row for the TTS plugin.
+# The plugin injects `commands` and `settings` (both shipped in dsh-base)
+# and provides `tts` (its own Service Definition), so the row activates
+# once those services mount.
+- insert:
+    - id: voice-tts
+      name: '@meomeo-dev/dsh-voice-tts'

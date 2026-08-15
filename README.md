@@ -1,0 +1,59 @@
+# dsh-voice-tts
+
+DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [dsh-voice](https://github.com/meomeo-dev/dsh-voice),只做「语音合成」,不管「文本口吻」。
+
+## 状态
+
+**首版已实现(可运行)**:capability seam 三段式 + volcengine provider + `/dsh-voice-tts` 命令 + bilingual 双语播报。**「每轮 turn 最后回复自动播报」尚未实现**(设计 §6 的前端播放挂接点是待办)。
+
+## 定位
+
+- 独立 npm bundle(`@meomeo-dev/dsh-voice-tts`),与 dsh-voice 平级。
+- capability seam 三段式:Service Definition(`ctx.tts`)/ Provider(`volcengine-tts`)/ Consumer(`/dsh-voice-tts` 命令)。
+- 首个 provider 仅支持 **volcengine**(`seed-tts-2.0` 标准 + 多语种音色)。
+- 普通配置走 settings,API key 走 credentials(绝不硬编码 / 环境变量)。
+
+## 已实现
+
+- **服务**:`ctx.tts` 注册表(provider 注册/委托合成/查音色)。
+- **provider**:volcengine 单向流式 HTTP 合成(`POST .../tts/unidirectional`),NDJSON 流式响应解析。
+- **命令** `/dsh-voice-tts`:
+  - `status` — 当前 provider / autoplay / 配置概览
+  - `list-voices [provider] [query]` — 列出音色(可按 voice_type/名称/场景/语种过滤)
+  - `config --template [provider]` — 输出完整配置模板(JSON)
+  - `config --json <json>` — 覆盖 provider 配置
+  - `speak <text>` — 合成文本为音频并写盘
+- **bilingual 双语播报**:按句切分判定 `zh`/`en`/`mixed`,按 `bilingual=both|english_only|chinese_only` 过滤(混合句永远整句读),`voices:{zh,en,mixed}` 多音色。
+
+## 配置
+
+```yaml
+voice-tts:
+  autoplay: false          # 预留;turn-final 自动播报未实现
+  provider: volcengine
+  providers:
+    volcengine:
+      voice_type: zh_female_vv_uranus_bigtts
+      resource_id: seed-tts-2.0       # seed-tts-2.0 / seed-icl-2.0
+      model: ""                       # 显式覆盖;通常留空(由 resource_id 决定)
+      format: mp3
+      sample_rate: 24000
+      speech_rate: 0
+      loudness_rate: 0
+      pitch: 0
+      bilingual: both                 # both / english_only / chinese_only
+      voices:                         # 各语言类别音色,缺省回退 voice_type
+        zh: zh_female_vv_uranus_bigtts
+        en: en_male_alex_uranus_bigtts
+        mixed: zh_female_vv_uranus_bigtts
+```
+
+完整配置语义与验收标准见 [docs/design.md](docs/design.md)。
+
+## 凭据
+
+API key 存 `$DSH_HOME/.credentials.yaml`(0600),引用名 `VOLCENGINE_TTS_API_KEY`,不进 settings / 环境变量 / session log。
+
+## 文档证据
+
+技术文档与音色列表在 `docs/tech_stack/tts/volcengine/`,**过期 D+90 天**(2026-08-14 → 2026-11-12)。
