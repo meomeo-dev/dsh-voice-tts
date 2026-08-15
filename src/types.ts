@@ -34,6 +34,26 @@ export interface TtsResult {
   readonly textWords: number
 }
 
+/** 流式合成的一个音频分片(stream 交付的最小单位)。 */
+export interface TtsChunk {
+  /** 分片音频字节。 */
+  readonly audio: Uint8Array
+}
+
+/** capability seam 的 Provider 角色契约。 */
+export interface TtsProvider {
+  /** Provider 唯一 id,如 `volcengine`。 */
+  readonly id: string
+  /** 完整配置模板(供 `config --template` 展示)。 */
+  readonly configTemplate: ConfigTemplate
+  /** 合成一段文本为音频字节。 */
+  synthesize(request: TtsRequest): Promise<TtsResult>
+  /** 流式合成一段文本为音频分片序列。 */
+  streamSynthesize(request: TtsRequest): AsyncIterable<TtsChunk>
+  /** 该 provider 可用的音色列表。 */
+  listVoices(): readonly TtsVoice[]
+}
+
 /** `config --template` 输出的单个字段描述。 */
 export interface ConfigTemplateField {
   readonly type: 'string' | 'number' | 'object'
@@ -48,18 +68,6 @@ export interface ConfigTemplate {
   readonly provider: string
   readonly config: Readonly<Record<string, ConfigTemplateField>>
   readonly credentials: { readonly apiKeyRef: string }
-}
-
-/** capability seam 的 Provider 角色契约。 */
-export interface TtsProvider {
-  /** Provider 唯一 id,如 `volcengine`。 */
-  readonly id: string
-  /** 完整配置模板(供 `config --template` 展示)。 */
-  readonly configTemplate: ConfigTemplate
-  /** 合成一段文本为音频字节。 */
-  synthesize(request: TtsRequest): Promise<TtsResult>
-  /** 该 provider 可用的音色列表。 */
-  listVoices(): readonly TtsVoice[]
 }
 
 /** 模型版本(请求头 `X-Api-Resource-Id`)。 */
@@ -84,6 +92,9 @@ export interface VoiceTtsVoices {
   readonly mixed?: string
 }
 
+/** turn-final 的音频交付方式。 */
+export type DeliveryMode = 'off' | 'file' | 'host_play' | 'stream'
+
 /** volcengine provider 的已解析配置(settings schema 解析后的字段)。 */
 export interface VolcengineConfig {
   /** 音色 ID(`speaker`),必选。 */
@@ -92,8 +103,10 @@ export interface VolcengineConfig {
   resource_id: VolcengineResourceId
   /** `req_params.model`,仅复刻音色需覆盖。 */
   model: string
-  /** 音频格式。 */
+  /** 音频格式(file/stream 落盘用)。 */
   format: VolcengineFormat
+  /** host_play 的合成格式(跨平台播放器兼容,默认 wav)。 */
+  play_format: VolcengineFormat
   /** 采样率 Hz,[8000, 48000]。 */
   sample_rate: number
   /** 语速,[-50, 100]。 */
@@ -110,8 +123,8 @@ export interface VolcengineConfig {
 
 /** `voice-tts` 设置命名空间的已解析切片。 */
 export interface VoiceTtsSettings {
-  /** 自动播放开关(首版为预留,播放挂接点尚未实现)。 */
-  autoplay: boolean
+  /** turn-final 交付方式:off 不处理 / file 落盘 / host_play 本机播放 / stream 流式。 */
+  delivery: DeliveryMode
   /** 当前选中的 provider id。 */
   provider: string
   /** 各 provider 的配置。 */

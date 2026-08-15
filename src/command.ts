@@ -4,18 +4,20 @@
  * @module dsh-voice-tts/command
  */
 
-import type { TtsVoice, VoiceTtsSettings } from './types.js'
+import type { DeliveryMode, TtsVoice, VoiceTtsSettings } from './types.js'
 import { DEFAULT_VOICE_TYPE, VOLCENGINE_CONFIG_TEMPLATE } from './volcengine.js'
 
 /** 命令用法回显文案。 */
 export const USAGE = [
   'Usage: /dsh-voice-tts [status|help]',
-  '  status                            # 当前 provider / autoplay / 配置概览',
+  '  status                            # 当前 provider / delivery / 配置概览',
   '  list-voices [provider] [query]    # 列出可用音色(可按 voice_type/名称/场景/语种过滤)',
   '  config --template [provider]      # 输出某 provider 的完整配置模板(JSON)',
   '  config --json <json>              # 用 JSON 覆盖 provider 配置(部分字段即可)',
-  '  speak <text>                      # 合成文本为音频并写盘(开发/验收用)',
+  '  speak [--delivery <mode>] <text>  # 合成文本,按 delivery(默认读 settings.delivery)交付',
 ].join('\n')
+
+const DELIVERY_MODES: readonly DeliveryMode[] = ['off', 'file', 'host_play', 'stream']
 
 /** `/dsh-voice-tts` 的解析结果。 */
 export type TtsCommand =
@@ -23,11 +25,12 @@ export type TtsCommand =
   | { readonly kind: 'list-voices'; readonly provider: string; readonly query: string }
   | { readonly kind: 'config-template'; readonly provider: string }
   | { readonly kind: 'config-json'; readonly json: string }
-  | { readonly kind: 'speak'; readonly text: string }
+  | { readonly kind: 'speak'; readonly text: string; readonly delivery?: DeliveryMode }
   | { readonly kind: 'help' }
 
 /**
- * 解析命令参数。`config --json` 后的文本**原样保留**(含空格),交给 `JSON.parse`。
+ * 解析命令参数。`config --json` 后的文本**原样保留**(含空格),交给 `JSON.parse`;
+ * `speak [--delivery <mode>] <text>` 支持可选交付模式覆盖。
  * @param rawInput - 命令名之后的原始文本(含前导空白)。
  * @returns 解析结果。
  */
@@ -57,8 +60,14 @@ export function parseTtsCommand(rawInput: string): TtsCommand {
       }
       return { kind: 'help' }
     }
-    case 'speak':
+    case 'speak': {
+      const match = /^--delivery\s+(\S+)\s+(.+)$/u.exec(rest)
+      if (match !== null) {
+        const mode = match[1] as DeliveryMode
+        return { kind: 'speak', text: match[2]!, ...DELIVERY_MODES.includes(mode) ? { delivery: mode } : {} }
+      }
       return { kind: 'speak', text: rest }
+    }
     default:
       return { kind: 'help' }
   }
@@ -109,7 +118,7 @@ export function renderConfigTemplate(): string {
 }
 
 /**
- * 渲染 `status` 概览:当前 provider、autoplay、已注册 provider 与 volcengine 配置。
+ * 渲染 `status` 概览:当前 provider、delivery、已注册 provider 与 volcengine 配置。
  * @param settings - 已解析设置。
  * @param providerIds - 已注册 provider id 列表。
  * @returns 多行概览文本。
@@ -118,12 +127,12 @@ export function renderStatus(settings: VoiceTtsSettings, providerIds: readonly s
   const v = settings.providers.volcengine
   return [
     `provider:  ${settings.provider}`,
-    `autoplay:  ${String(settings.autoplay)}`,
+    `delivery:  ${settings.delivery}`,
     `providers: ${providerIds.join(', ')}`,
     `volcengine config:`,
     `  voice_type:   ${v.voice_type}`,
     `  resource_id:  ${v.resource_id}`,
-    `  format:       ${v.format} @ ${v.sample_rate} Hz`,
+    `  format:       ${v.format}  play_format: ${v.play_format} @ ${v.sample_rate} Hz`,
     `  speech_rate:  ${v.speech_rate}  loudness_rate: ${v.loudness_rate}  pitch: ${v.pitch}`,
     `  bilingual:    ${v.bilingual}`,
     `  voices:       zh=${v.voices.zh ?? v.voice_type}  en=${v.voices.en ?? v.voice_type}  mixed=${v.voices.mixed ?? v.voices.zh ?? v.voice_type}`,

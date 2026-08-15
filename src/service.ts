@@ -5,7 +5,7 @@
 
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
-import type { TtsProvider, TtsRequest, TtsResult, TtsVoice } from './types.js'
+import type { TtsChunk, TtsProvider, TtsRequest, TtsResult, TtsVoice } from './types.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -66,5 +66,19 @@ export class TtsService extends Service {
   /** 列出某 provider 的音色;未知 provider 返回空表。 */
   listVoices(providerId: string): readonly TtsVoice[] {
     return this.providers.get(providerId)?.listVoices() ?? []
+  }
+
+  /**
+   * 流式合成:委托某 provider 返回音频分片序列。
+   * @param providerId - 目标 provider id。
+   * @param request - 合成请求。
+   * @returns 音频分片序列;未知 provider 拒绝。
+   */
+  async *stream(providerId: string, request: TtsRequest): AsyncIterable<TtsChunk> {
+    const provider = this.providers.get(providerId)
+    if (provider === undefined) {
+      throw new Error(`unknown TTS provider "${providerId}"`)
+    }
+    yield * provider.streamSynthesize(request)
   }
 }

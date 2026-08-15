@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildVolcengineRequest,
   parseVolcengineStream,
+  streamVolcengine,
   synthesizeVolcengine,
   VOLCENGINE_API_URL,
 } from '../src/volcengine.js'
@@ -12,6 +13,7 @@ const config: VolcengineConfig = {
   resource_id: 'seed-tts-2.0',
   model: '',
   format: 'mp3',
+  play_format: 'wav',
   sample_rate: 24000,
   speech_rate: 0,
   loudness_rate: 0,
@@ -109,5 +111,53 @@ describe('synthesizeVolcengine', () => {
       text: async () => 'boom',
     })) as unknown as typeof fetch
     await expect(synthesizeVolcengine(config, 'key', 'x', fetchImpl)).rejects.toThrow('HTTP 500')
+  })
+})
+
+describe('streamVolcengine', () => {
+  const b64 = (s: string): string => Buffer.from(s).toString('base64')
+
+  function chunkedBody(lines: string[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder()
+    const encoded = lines.map(line => encoder.encode(line + '\n'))
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of encoded) controller.enqueue(part)
+        controller.close()
+      },
+    })
+  }
+
+  it('yields one chunk per audio line, skipping the success summary', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      body: chunkedBody([
+        JSON.stringify({ code: 0, message: '', data: b64('A') }),
+        JSON.stringify({ code: 0, message: '', data: b64('B') }),
+        JSON.stringify({ code: 20000000, message: 'OK', data: null, usage: { text_words: 3 } }),
+      ]),
+    })) as unknown as typeof fetch
+
+    const chunks: string[] = []
+    for await (const chunk of streamVolcengine(config, 'key', 'hi', fetchImpl)) {
+      chunks.push(Buffer.from(chunk.audio).toString('utf8'))
+    }
+    expect(chunks).toEqual(['A', 'B'])
+  })
+
+  it('throws on a non-zero code line', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      body: chunkedBody([JSON.stringify({ code: 500, message: 'oops' })]),
+    })) as unknown as typeof fetch
+
+    const chunks: string[] = []
+    await expect(async () => {
+      for await (const chunk of streamVolcengine(config, 'key', 'x', fetchImpl)) {
+        chunks.push(Buffer.from(chunk.audio).toString('utf8'))
+      }
+    }).rejects.toThrow('code 500')
   })
 })

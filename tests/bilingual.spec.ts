@@ -15,6 +15,7 @@ const base: VolcengineConfig = {
   resource_id: 'seed-tts-2.0',
   model: '',
   format: 'mp3',
+  play_format: 'wav',
   sample_rate: 24000,
   speech_rate: 0,
   loudness_rate: 0,

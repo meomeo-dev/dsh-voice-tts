@@ -50,14 +50,15 @@ dsh-tts-player   (Consumer —— 自动播放 / 手动播放按钮 / 命令)
 
 ```yaml
 voice-tts:
-  autoplay: false                    # 自动播放开关
+  delivery: off                      # turn-final 交付:off / file / host_play / stream
   provider: volcengine               # 当前选中的 provider
   providers:
     volcengine:
       voice_type: zh_female_vv_uranus_bigtts   # speaker(音色 ID),必选
       resource_id: seed-tts-2.0               # X-Api-Resource-Id(模型版本)
       model: ""                              # req_params.model 显式覆盖(通常留空,由 X-Api-Resource-Id 决定;仅旧版 1.0 音色需设如 seed-tts-1.1)
-      format: mp3                             # audio_params.format: mp3/pcm/ogg_opus/wav
+      format: mp3                             # file/stream 落盘格式:mp3/pcm/ogg_opus/wav
+      play_format: wav                        # host_play 合成格式(跨平台系统播放器兼容,默认 wav)
       sample_rate: 24000                      # audio_params.sample_rate [8000,48000]
       speech_rate: 0                          # audio_params.speech_rate [-50,100]
       loudness_rate: 0                        # audio_params.loudness_rate [-50,100]
@@ -73,10 +74,12 @@ voice-tts:
 
 | settings 字段 | API 位置 | 默认 | 取值范围 | 说明 |
 |---|---|---|---|---|
+| `delivery` | —(本地策略) | `off` | `off` / `file` / `host_play` / `stream` | turn-final 交付方式(见 §6) |
 | `voice_type` | `req_params.speaker` | —(必选) | — | 音色 ID,值见 `voices.md`;双语各语言类别的回退音色 |
 | `resource_id` | 请求头 `X-Api-Resource-Id` | `seed-tts-2.0` | `seed-tts-2.0` / `seed-icl-2.0` | 模型版本;复刻音色用 `seed-icl-2.0` |
 | `model` | `req_params.model` | `''`(空) | — | 可选显式覆盖;空则不发送(由 `X-Api-Resource-Id` 决定模型)。仅旧版 1.0 音色需设(如 `seed-tts-1.1`);2.0 合成/复刻均勿设 |
-| `format` | `audio_params.format` | `mp3` | `mp3`/`pcm`/`ogg_opus`/`wav` | 流式场景推荐 pcm |
+| `format` | `audio_params.format` | `mp3` | `mp3`/`pcm`/`ogg_opus`/`wav` | file/stream 落盘格式 |
+| `play_format` | `audio_params.format` | `wav` | `mp3`/`pcm`/`ogg_opus`/`wav` | host_play 合成格式(跨平台系统播放器兼容,默认 wav) |
 | `sample_rate` | `audio_params.sample_rate` | `24000` | `[8000,16000,22050,24000,32000,44100,48000]` | Hz |
 | `speech_rate` | `audio_params.speech_rate` | `0` | `[-50,100]` | 100=2 倍速,-50=0.5 倍速 |
 | `loudness_rate` | `audio_params.loudness_rate` | `0` | `[-50,100]` | 100=2 倍音量 |
@@ -126,7 +129,8 @@ provider 配置里只存 `apiKeyRef` 的**引用名**,不存值。对齐 dsh-bas
     "voice_type":   { "type": "string", "required": true,  "default": null,                        "description": "音色 ID(speaker),值见 voices.md,如 zh_female_vv_uranus_bigtts" },
     "resource_id":  { "type": "string", "required": false, "default": "seed-tts-2.0",              "description": "模型版本;复刻音色用 seed-icl-2.0" },
     "model":        { "type": "string", "required": false, "default": "",                        "description": "req_params.model 显式覆盖(通常留空;仅旧版 1.0 音色需指定,如 seed-tts-1.1)" },
-    "format":       { "type": "string", "required": false, "default": "mp3",                       "description": "音频格式 mp3/pcm/ogg_opus/wav" },
+    "format":       { "type": "string", "required": false, "default": "mp3",                       "description": "音频格式 mp3/pcm/ogg_opus/wav(file/stream 落盘)" },
+    "play_format":  { "type": "string", "required": false, "default": "wav",                       "description": "host_play 合成格式(跨平台播放器兼容,默认 wav)" },
     "sample_rate":  { "type": "number", "required": false, "default": 24000,                       "description": "采样率 Hz,可选 8000/16000/22050/24000/32000/44100/48000" },
     "speech_rate":  { "type": "number", "required": false, "default": 0,                           "description": "语速 [-50,100],100=2倍速,-50=0.5倍速" },
     "loudness_rate":{ "type": "number", "required": false, "default": 0,                           "description": "音量 [-50,100],100=2倍音量" },
@@ -169,18 +173,24 @@ provider 配置里只存 `apiKeyRef` 的**引用名**,不存值。对齐 dsh-bas
 - **解析策略**:handler 里对 `rawInput.trim()` 做子命令分派,取 `--json` 之后的子串直接 `JSON.parse`,**无需逆转义**。
 - 用户若手工写了 `{\"a\":1}`(带反斜杠),那反斜杠也是字面字符,`JSON.parse` 会失败——这是**正确的**行为(报错提示用户去掉转义),而非需要我们去转。
 
-## 6. 自动播报 / 手动合成
+## 6. turn-final 交付(delivery)
 
-**现状(纯插件,不入侵 dsh 源码):**
+`delivery` 决定每轮 turn 结束后如何交付最终回复的音频。四种模式:
 
-- **autoplay = true**:监听 `session/event` 的 `turn/end`(`dsh-session` 公开事件,`agent-instructions` 同款接缝),每轮结束提取该 turn 最后一条带可见文本的 `assistant/message`,走双语管线合成并**写音频文件** `dsh-voice-tts-turn-<n>.<format>` 到会话 cwd。合成失败仅 `logger.warn`,不阻断会话。
-- **autoplay = false**:不自动合成;用 `/dsh-voice-tts speak <text>` 手动合成。
+| delivery | 行为 | 音频终点 | 现状 |
+|---|---|---|---|
+| `off` | 不处理 | — | ✅ |
+| `file` | 合成完整 → 落盘 `dsh-voice-tts-turn-<n>.<format>` | 文件系统 | ✅ |
+| `host_play` | 合成(`play_format`)→ 落盘 → 本机系统播放器播放 | host 进程所在机器的扬声器 | ✅ |
+| `stream` | 流式合成(逐分片)→ 当前落盘;前端消费未来接 | 未来:浏览器 | 后端✅ / 前端待 dsh audio seam |
 
-**缺口(需改 dsh 源码,超出「不入侵」边界):**
+**触发**:监听 `session/event` 的 `turn/end`(`dsh-session` 公开事件,`agent-instructions` 同款接缝),提取该 turn 最后一条带可见文本的 `assistant/message`,按 `delivery` 交付。合成/交付失败仅 `logger.warn`,不阻断会话。全部纯插件实现,不入侵 dsh 源码。
 
-「合成成文件」不等于「浏览器发声」。dsh web 目前**没有音频播放接缝**——`@deepseek-ai/dsh-attachment` 明确仅支持 image(PNG/JPEG/WebP/GIF),其「Known Limitations」写明 audio/video 是 deferred;`packages/client` 内 `audio`/`play(` 零命中。要把音频送进网页自动播放,必须新建一个 audio seam(后端持久化 + 前端 `<audio>` 播放),这是 dsh 本体改动,不属于本 bundle。
+**`host_play` 的语义边界**:它让「host 进程所在的机器」发声,不是「浏览器所在的设备」。个人 PC 上 `dsh web`(host=本机=浏览器)才能听见;远程/容器部署时 host 无扬声器,此模式无效——此时只有 `file`(下载后本地播)或未来 `stream`(前端播)有意义。
 
-因此「每轮最后回复是否会被**播报**」当前的可测边界是:**会被**合成(文件落地)、**不会被**浏览器自动发声。若要做后者,需在 dsh 侧新增 audio 能力(另立需求)。
+**`play_format` 默认 wav**:macOS `afplay`/Linux `aplay`/Windows `SoundPlayer` 三个系统播放器都能直接播 wav(未压缩 PCM),无需额外解码器。mp3/ogg_opus 在部分平台(如 `aplay`)不被原生支持。
+
+**`stream` 的缺口(需改 dsh 源码,超出「不入侵」边界)**:dsh web 目前**没有音频播放接缝**——`@deepseek-ai/dsh-attachment` 明确仅支持 image(PNG/JPEG/WebP/GIF),其「Known Limitations」写明 audio/video 是 deferred;`packages/client` 内 `audio`/`play(` 零命中。`stream` 模式已实现后端流式合成(`ctx.tts.stream()` 返回 `AsyncIterable<TtsChunk>`),前端 `<audio>` 消费端待 dsh 上游补 audio seam 后再接。
 
 ## 7. 双语播报(bilingual)
 
@@ -251,17 +261,19 @@ volcengine 音色列表已整理为权威参考:
 - 不做声音复刻(`seed-icl-2.0`)与多情感(`mars/moon/wvae`)音色。
 - 不做 `additions` 进阶参数(silence/markdown/emoji/dialect)、`context_texts` 语音指令、`section_id`、`tone_fidelity`、字幕、缓存。
 - 不做 model-facing 的 TTS tool(仅人工命令)。
+- 不做 `stream` 的前端 `<audio>` 播放(待 dsh 上游 audio seam)。
 - 不硬编码 API key、不走环境变量注入 provider 普通配置。
 
 ## 12. 验收标准(AC)
 
 1. `dsh plugin --profile <p> add @meomeo-dev/dsh-voice-tts` 可安装,`voice-tts` 插件挂载。
-2. `/dsh-voice-tts config --template volcengine` 返回**完整**配置模板(不省略参数、含默认值),字段与 §4.1 一致。
+2. `/dsh-voice-tts config --template volcengine` 返回**完整**配置模板(不省略参数、含默认值),字段与 §4.1 一致(含 `play_format`)。
 3. `/dsh-voice-tts config --json '<json>'` 可写回 settings,转义/非转义均正确解析(以 §5 探针结论为准)。
 4. API key 从 credentials 解析(`X-Api-Key` 头),不进 settings / 不进 session log / 不进 process env。
 5. `POST .../tts/unidirectional` 请求头带 `X-Api-Key` + `X-Api-Resource-Id` + `X-Api-Request-Id`(uuid),`speaker` = 配置的 `voice_type`。
-6. autoplay 开关可配置;true 自动播放,false 手动播放。
+6. `delivery` 四态可配置且热更新:`off` 不处理;`file` 落盘;`host_play` 落盘 + 本机播放(`play_format`);`stream` 流式合成落盘。
 7. `/dsh-voice-tts list-voices volcengine` 列出音色(场景/音色名/voice_type/语言/是否支持指令)。
 8. provider 选择、普通配置走 settings,热更新生效。
 9. `/dsh-voice-tts speak <双语文本>` 按 §7 语义:切句→判定语言→`bilingual` 过滤(混合句永远读)→按 `voices` 分配音色→相邻同音色合并→拼接输出;`bilingual=english_only` 时纯中文句被跳过。
-10. `autoplay=true` 时,`turn/end` 触发:提取该 turn 最终可见 assistant 文本(跳过 tool-call-only 消息)→ 双语管线合成 → 写 `dsh-voice-tts-turn-<n>.<format>` 文件;`autoplay=false` 时不合成。
+10. `speak [--delivery <mode>]` 支持交付覆盖,缺省用 `settings.delivery`。
+11. `delivery≠off` 时,`turn/end` 触发:提取该 turn 最终可见 assistant 文本(跳过 tool-call-only 消息)→ 双语管线合成 → 按 delivery 交付;`delivery=off` 时不处理。

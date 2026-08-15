@@ -23,6 +23,7 @@ import type { VoiceTtsSettings } from './types.js'
 import { concatAudio, planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
 import type { TurnEventLike } from './turn-final.js'
+import { playFile } from './player.js'
 import {
   filterVoices,
   listVoicesText,
@@ -40,7 +41,7 @@ const NAMESPACE = settingsNamespace('voice-tts')
 
 /** 该命名空间的 schema,缺省回退到 volcengine 默认配置。 */
 const SCHEMA: z<VoiceTtsSettings> = z.object({
-  autoplay: z.boolean().default(false),
+  delivery: z.union(['off', 'file', 'host_play', 'stream'] as const).default('off'),
   provider: z.string().default('volcengine'),
   providers: z.object({
     volcengine: z.object({
@@ -48,6 +49,7 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       resource_id: z.union(['seed-tts-2.0', 'seed-icl-2.0'] as const).default('seed-tts-2.0'),
       model: z.string().default(''),
       format: z.union(['mp3', 'pcm', 'ogg_opus', 'wav'] as const).default('mp3'),
+      play_format: z.union(['mp3', 'pcm', 'ogg_opus', 'wav'] as const).default('wav'),
       sample_rate: z.number().step(1).min(8000).max(48000).default(24000),
       speech_rate: z.number().step(1).min(-50).max(100).default(0),
       loudness_rate: z.number().step(1).min(-50).max(100).default(0),
@@ -64,7 +66,7 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
 
 /** settings 未挂载 / 未写入时的兜底设置(与 schema 默认一致)。 */
 const DEFAULT_SETTINGS: VoiceTtsSettings = {
-  autoplay: false,
+  delivery: 'off',
   provider: 'volcengine',
   providers: {
     volcengine: {
@@ -72,6 +74,7 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       resource_id: 'seed-tts-2.0',
       model: '',
       format: 'mp3',
+      play_format: 'wav',
       sample_rate: 24000,
       speech_rate: 0,
       loudness_rate: 0,
@@ -106,9 +109,15 @@ function parseJsonOrThrow(json: string): Record<string, unknown> {
  * @param tts - TTS 注册表。
  * @param settings - 已解析设置。
  * @param text - 待合成文本。
+ * @param format - 合成格式,默认 `volcengine.format`(host_play 用 `play_format`)。
  * @returns 拼接后的音频字节。
  */
-async function synthesizeSpeech(tts: TtsService, settings: VoiceTtsSettings, text: string): Promise<Uint8Array> {
+async function synthesizeSpeech(
+  tts: TtsService,
+  settings: VoiceTtsSettings,
+  text: string,
+  format = settings.providers.volcengine.format,
+): Promise<Uint8Array> {
   const volc = settings.providers.volcengine
   const plan = planBilingualSpeech(text, volc)
   if (plan.runs.length === 0) {
@@ -118,11 +127,88 @@ async function synthesizeSpeech(tts: TtsService, settings: VoiceTtsSettings, tex
   for (const run of plan.runs) {
     const result = await tts.synthesize(settings.provider, {
       text: run.text,
-      config: { ...volc, voice_type: run.voice },
+      config: { ...volc, voice_type: run.voice, format },
     })
     parts.push(result.audio)
   }
   return concatAudio(parts)
+}
+
+/**
+ * 流式合成文本为音频字节(双语规划 + 逐分片收集 + 拼接)。
+ * `stream` 交付用它:走 provider 的流式接口,前端消费端未来接入时直接改用
+ * `tts.stream()` 逐分片推,当前退化为落盘完整音频。
+ * @param tts - TTS 注册表。
+ * @param settings - 已解析设置。
+ * @param text - 待合成文本。
+ * @returns 拼接后的音频字节。
+ */
+async function streamSpeech(tts: TtsService, settings: VoiceTtsSettings, text: string): Promise<Uint8Array> {
+  const volc = settings.providers.volcengine
+  const plan = planBilingualSpeech(text, volc)
+  if (plan.runs.length === 0) {
+    throw new Error(`no speechable sentences after bilingual=${volc.bilingual} filter`)
+  }
+  const parts: Uint8Array[] = []
+  for (const run of plan.runs) {
+    for await (const chunk of tts.stream(settings.provider, {
+      text: run.text,
+      config: { ...volc, voice_type: run.voice },
+    })) {
+      parts.push(chunk.audio)
+    }
+  }
+  return concatAudio(parts)
+}
+
+/** 一次交付的结果:音频字节、落盘路径、是否触发本机播放、所用格式。 */
+interface DeliveryOutcome {
+  readonly audio: Uint8Array
+  readonly path: string
+  readonly played: boolean
+  readonly format: string
+}
+
+/**
+ * 按 delivery 模式交付一次合成:off 拒绝;file 落盘;host_play 落盘 + 本机播放;
+ * stream 流式合成落盘(前端消费未来接)。
+ * @param tts - TTS 注册表。
+ * @param settings - 已解析设置。
+ * @param cwd - 落盘目录。
+ * @param baseName - 文件名(不含扩展名)。
+ * @param text - 待合成文本。
+ * @param delivery - 交付模式。
+ * @returns 交付结果。
+ */
+async function deliverSpeech(
+  tts: TtsService,
+  settings: VoiceTtsSettings,
+  cwd: string,
+  baseName: string,
+  text: string,
+  delivery: VoiceTtsSettings['delivery'],
+): Promise<DeliveryOutcome> {
+  const volc = settings.providers.volcengine
+  if (delivery === 'off') {
+    throw new Error('delivery is off')
+  }
+  if (delivery === 'stream') {
+    const audio = await streamSpeech(tts, settings, text)
+    const path = resolve(cwd, `${baseName}.${volc.format}`)
+    writeFileSync(path, audio)
+    return { audio, path, played: false, format: volc.format }
+  }
+  if (delivery === 'host_play') {
+    const audio = await synthesizeSpeech(tts, settings, text, volc.play_format)
+    const path = resolve(cwd, `${baseName}.${volc.play_format}`)
+    writeFileSync(path, audio)
+    const child = playFile({ path, format: volc.play_format })
+    return { audio, path, played: child !== undefined, format: volc.play_format }
+  }
+  const audio = await synthesizeSpeech(tts, settings, text)
+  const path = resolve(cwd, `${baseName}.${volc.format}`)
+  writeFileSync(path, audio)
+  return { audio, path, played: false, format: volc.format }
 }
 
 /**
@@ -166,12 +252,12 @@ async function executeTtsCommand(
     case 'speak': {
       if (command.text.length === 0) return { kind: 'error', text: 'usage: /dsh-voice-tts speak <text>' }
       const settings = scope.get()
+      const delivery = command.delivery ?? settings.delivery
       try {
-        const audio = await synthesizeSpeech(tts, settings, command.text)
         const cwd = invocation.agent.session.header.cwd ?? process.cwd()
-        const outPath = resolve(cwd, `dsh-voice-tts-output.${settings.providers.volcengine.format}`)
-        writeFileSync(outPath, audio)
-        return { kind: 'success', text: `synthesized ${audio.byteLength} bytes -> ${outPath}` }
+        const outcome = await deliverSpeech(tts, settings, cwd, 'dsh-voice-tts-output', command.text, delivery)
+        const played = outcome.played ? ' (played)' : ''
+        return { kind: 'success', text: `synthesized ${outcome.audio.byteLength} bytes (${outcome.format})${played} -> ${outcome.path}` }
       } catch (error) {
         return { kind: 'error', text: `synthesis failed: ${describeError(error)}` }
       }
@@ -195,22 +281,21 @@ export function apply(ctx: Context): void {
   // 当前生效设置(settings 挂载前为默认,挂载后随 watch 更新)。
   let activeSettings: VoiceTtsSettings = DEFAULT_SETTINGS
 
-  // turn-final 自动合成:autoplay=true 时,每轮结束把最终回复合成到音频文件。
+  // turn-final 交付:delivery=off 不处理;否则每轮结束把最终回复按 delivery 交付。
   ctx.on('session/event', (session, event) => {
     if (event.type !== 'turn/end') return
-    if (!activeSettings.autoplay) return
+    const settings = activeSettings
+    if (settings.delivery === 'off') return
     const text = finalAssistantText(session.events as readonly TurnEventLike[], event.data.turn)
     if (text === undefined) return
-    const settings = activeSettings
-    void synthesizeSpeech(tts, settings, text)
-      .then(audio => {
-        const cwd = session.header.cwd ?? process.cwd()
-        const outPath = resolve(cwd, `dsh-voice-tts-turn-${event.data.turn}.${settings.providers.volcengine.format}`)
-        writeFileSync(outPath, audio)
-        ctx.logger.info('dsh-voice-tts: turn %d synthesized %d bytes -> %s', event.data.turn, audio.byteLength, outPath)
+    const cwd = session.header.cwd ?? process.cwd()
+    void deliverSpeech(tts, settings, cwd, `dsh-voice-tts-turn-${event.data.turn}`, text, settings.delivery)
+      .then(outcome => {
+        const played = outcome.played ? ' (played)' : ''
+        ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', event.data.turn, outcome.audio.byteLength, outcome.format, played, outcome.path)
       })
       .catch(error => {
-        ctx.logger.warn('dsh-voice-tts: turn-final synthesis failed: %s', describeError(error))
+        ctx.logger.warn('dsh-voice-tts: turn-final delivery failed: %s', describeError(error))
       })
   })
 

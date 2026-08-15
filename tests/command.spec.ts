@@ -79,7 +79,7 @@ describe('listVoicesText', () => {
 
 describe('renderStatus', () => {
   const settings: VoiceTtsSettings = {
-    autoplay: false,
+    delivery: 'off',
     provider: 'volcengine',
     providers: {
       volcengine: {
@@ -87,6 +87,7 @@ describe('renderStatus', () => {
         resource_id: 'seed-tts-2.0',
         model: '',
         format: 'mp3',
+        play_format: 'wav',
         sample_rate: 24000,
         speech_rate: 0,
         loudness_rate: 0,
@@ -97,11 +98,12 @@ describe('renderStatus', () => {
     },
   }
 
-  it('reports provider, autoplay, and config', () => {
+  it('reports provider, delivery, and config', () => {
     const text = renderStatus(settings, ['volcengine'])
     expect(text).toContain('provider:  volcengine')
-    expect(text).toContain('autoplay:  false')
+    expect(text).toContain('delivery:  off')
     expect(text).toContain('voice_type:   zh_female_vv_uranus_bigtts')
+    expect(text).toContain('play_format: wav')
   })
 })
 
@@ -111,7 +113,7 @@ describe('renderConfigTemplate', () => {
     const parsed = JSON.parse(template) as { provider: string; config: Record<string, unknown>; credentials: { apiKeyRef: string } }
     expect(parsed.provider).toBe('volcengine')
     expect(Object.keys(parsed.config)).toEqual([
-      'voice_type', 'resource_id', 'model', 'format', 'sample_rate', 'speech_rate', 'loudness_rate', 'pitch', 'bilingual', 'voices',
+      'voice_type', 'resource_id', 'model', 'format', 'play_format', 'sample_rate', 'speech_rate', 'loudness_rate', 'pitch', 'bilingual', 'voices',
     ])
     expect(parsed.credentials.apiKeyRef).toBe('VOLCENGINE_TTS_API_KEY')
   })
