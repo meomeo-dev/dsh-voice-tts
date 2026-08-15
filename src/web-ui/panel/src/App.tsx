@@ -310,8 +310,13 @@ function ProfilesEditor(props: {
   voices: readonly Voice[]
   onChange: (next: Record<string, Voices>) => void
 }): JSX.Element {
-  const rows = profilesToRows(props.profiles)
-  const update = (next: ProfileRow[]): void => props.onChange(rowsToProfiles(next))
+  // 本地编辑态:允许存在「空 id 行」供用户填写;提交时才把非空 id 行折叠成 profiles。
+  // 不能直接从 props.profiles 派生 rows——空 id 行会被 rowsToProfiles 丢弃,导致「+ 添加映射」加的空行立即消失。
+  const [rows, setRows] = useState<ProfileRow[]>(() => profilesToRows(props.profiles))
+  const update = (next: ProfileRow[]): void => {
+    setRows(next)
+    props.onChange(rowsToProfiles(next))
+  }
   return (
     <div className="profiles">
       <div className="section-title">per-voice 音色映射 (voice_profiles)</div>
