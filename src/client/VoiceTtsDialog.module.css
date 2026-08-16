@@ -8,11 +8,11 @@
   height: 70vh;
   border: 0;
   border-radius: 6px;
-  background: var(--ds-bg-platform, #f5f6f7);
+  background: var(--dsw-alias-bg-module-platform);
 }
 
 .unavailable {
   margin: 0;
-  font-size: 13px;
-  color: var(--ds-label-caption, #adb2b8);
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-caption);
 }

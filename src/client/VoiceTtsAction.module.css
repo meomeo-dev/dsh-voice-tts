@@ -6,22 +6,22 @@
   text-align: left;
   border: none;
   background: none;
-  font-size: 13px;
+  font: var(--dsw-font-xs-13);
   padding: 8px 12px;
   border-radius: 4px;
   cursor: pointer;
-  color: var(--ds-label-primary, #0f1115);
+  color: var(--dsw-alias-label-primary);
 }
 
 .item:hover {
-  background: var(--ds-hover, rgba(38, 49, 72, 0.06));
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .itemLabel {
-  font-weight: 500;
+  font: var(--dsw-font-xs-strong-13);
 }
 
 .itemSub {
-  font-size: 11px;
-  color: var(--ds-label-caption, #adb2b8);
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-caption);
 }
