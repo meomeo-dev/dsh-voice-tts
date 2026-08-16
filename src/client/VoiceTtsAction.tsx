@@ -1,6 +1,6 @@
-/** 会话标题栏的 🔊 入口按钮：点开下拉菜单，含三个选项。 */
+/** 🎙️ 下拉里 dsh-voice-tts 的菜单项：Set voice tts / Turn on-off / Stop host play。 */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SlotState } from './api.ts'
@@ -8,7 +8,7 @@ import { NS } from './locales.ts'
 import { VoiceTtsDialog } from './VoiceTtsDialog.tsx'
 import css from './VoiceTtsAction.module.css'
 
-/** 供父组件（header action）注入的业务动作。 */
+/** 供父组件（voice.menu 注册）注入的业务动作。 */
 export interface VoiceTtsInjected {
   getState: () => Promise<SlotState>
   toggle: () => Promise<void>
@@ -16,92 +16,52 @@ export interface VoiceTtsInjected {
   getPanelUrl: () => Promise<string | null>
 }
 
-/** header action 组件的完整 props。 */
+/** voice.menu 菜单项组件的完整 props。 */
 export type VoiceTtsActionProps =
-  PropsRuntime<'conversation.session.header.actions'> & VoiceTtsInjected & PropsLocale<typeof NS>
+  PropsRuntime<'voice.menu'> & VoiceTtsInjected & PropsLocale<typeof NS>
 
 /**
- * 会话标题栏的 TTS 入口：一个 🔊 按钮 + 下拉菜单（Set / Turn on-off / Stop）。
- * @param props - 会话标准 props + 业务动作 + locale。
- * @returns 触发按钮与（打开时的）下拉菜单 + 模态框。
+ * TTS 的三个菜单项（在 dsh-voice 的 🎙️ 下拉里）。
+ * @param props - 业务动作 + locale。
+ * @returns 三个菜单项按钮 + 「Set voice tts」模态框。
  */
 export function VoiceTtsAction({ getState, toggle, stop, getPanelUrl, t }: VoiceTtsActionProps) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [dialogOpen, setDialogOpen] = useState(false)
   const [state, setState] = useState<SlotState | null>(null)
   const [panelUrl, setPanelUrl] = useState<string | null>(null)
-  const rootRef = useRef<HTMLDivElement>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
 
-  // 打开菜单时拉取状态与面板 URL。
   useEffect(() => {
-    if (!menuOpen) return
     let cancelled = false
     getState().then(next => { if (!cancelled) setState(next) }).catch(() => {})
     getPanelUrl().then(url => { if (!cancelled) setPanelUrl(url) }).catch(() => {})
     return () => { cancelled = true }
-  }, [menuOpen, getState, getPanelUrl])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const closeOutside = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', closeOutside)
-    return () => { document.removeEventListener('pointerdown', closeOutside) }
-  }, [menuOpen])
+  }, [getState, getPanelUrl])
 
   const onToggle = (): void => {
-    toggle()
-      .then(() => getState())
-      .then(next => setState(next))
-      .catch(() => {})
+    toggle().then(() => getState()).then(next => setState(next)).catch(() => {})
   }
 
   const onStop = (): void => {
-    stop()
-      .then(() => getState())
-      .then(next => setState(next))
-      .catch(() => {})
-  }
-
-  const openDialog = (): void => {
-    setMenuOpen(false)
-    setDialogOpen(true)
+    stop().then(() => getState()).then(next => setState(next)).catch(() => {})
   }
 
   const on = state?.on ?? false
   const playing = state?.playing ?? false
 
   return (
-    <div className={css.root} ref={rootRef}>
-      <button
-        type="button"
-        className={css.trigger}
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
-        aria-label={t('trigger.aria')}
-        onClick={() => { setMenuOpen(next => !next) }}
-      >
-        🔊
+    <>
+      <button type="button" role="menuitem" className={css.item} onClick={() => { setDialogOpen(true) }}>
+        <span className={css.itemLabel}>{t('menu.setTts')}</span>
       </button>
-      {menuOpen && (
-        <div className={css.menu} role="menu">
-          <button type="button" role="menuitem" className={css.menuItem} onClick={openDialog}>
-            <span className={css.itemLabel}>{t('menu.setTts')}</span>
-          </button>
-          <button type="button" role="menuitem" className={css.menuItem} onClick={onToggle}>
-            <span className={css.itemLabel}>{on ? t('menu.toggle.on') : t('menu.toggle.off')}</span>
-            <span className={css.itemSub}>{on ? t('menu.toggle.sub.on') : t('menu.toggle.sub.off')}</span>
-          </button>
-          <button type="button" role="menuitem" className={css.menuItem} onClick={onStop}>
-            <span className={css.itemLabel}>{t('menu.stop')}</span>
-            <span className={css.itemSub}>{playing ? t('menu.stop.sub.playing') : t('menu.stop.sub.idle')}</span>
-          </button>
-        </div>
-      )}
+      <button type="button" role="menuitem" className={css.item} onClick={onToggle}>
+        <span className={css.itemLabel}>{on ? t('menu.toggle.on') : t('menu.toggle.off')}</span>
+        <span className={css.itemSub}>{on ? t('menu.toggle.sub.on') : t('menu.toggle.sub.off')}</span>
+      </button>
+      <button type="button" role="menuitem" className={css.item} onClick={onStop}>
+        <span className={css.itemLabel}>{t('menu.stop')}</span>
+        <span className={css.itemSub}>{playing ? t('menu.stop.sub.playing') : t('menu.stop.sub.idle')}</span>
+      </button>
       <VoiceTtsDialog open={dialogOpen} onClose={() => { setDialogOpen(false) }} panelUrl={panelUrl} t={t} />
-    </div>
+    </>
   )
 }

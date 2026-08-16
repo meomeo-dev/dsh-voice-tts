@@ -17,7 +17,8 @@
       "@deepseek-ai/dsh-client-ui-conversation/client": ["../deepseek-harness/packages/client/ui-conversation/lib/types/client"],
       "@deepseek-ai/dsh-client-ui-slots": ["../deepseek-harness/packages/client/ui-slots/lib/types"],
       "@deepseek-ai/dsh-client-ui-primitives": ["../deepseek-harness/packages/client/ui-primitives/lib/types"],
-      "@deepseek-ai/dsh-client-locale/client": ["../deepseek-harness/packages/client/locale/lib/types/client"]
+      "@deepseek-ai/dsh-client-locale/client": ["../deepseek-harness/packages/client/locale/lib/types/client"],
+      "@meomeo-dev/dsh-voice/client": ["../dsh-voice/src/client.d.ts"]
     }
   },
   "include": ["src/client", "src/css-modules.d.ts"]

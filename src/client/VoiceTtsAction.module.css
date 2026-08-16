@@ -1,39 +1,4 @@
-.root {
-  position: relative;
-}
-
-.trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: none;
-  font-size: 14px;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 6px;
-  color: var(--ds-label-secondary, #61666b);
-}
-
-.trigger:hover {
-  background: var(--ds-hover, rgba(38, 49, 72, 0.06));
-  color: var(--ds-label-primary, #0f1115);
-}
-
-.menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  min-width: 240px;
-  background: var(--ds-bg-base, #fff);
-  border: 1px solid var(--ds-border-l2, rgba(0, 0, 0, 0.1));
-  border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  padding: 4px;
-  z-index: 20;
-}
-
-.menuItem {
+.item {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -48,7 +13,7 @@
   color: var(--ds-label-primary, #0f1115);
 }
 
-.menuItem:hover {
+.item:hover {
   background: var(--ds-hover, rgba(38, 49, 72, 0.06));
 }
 
