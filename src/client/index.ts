@@ -11,8 +11,10 @@ import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // 类型声明合并：拿 dsh-voice 声明的 `voice.menu` SlotMap 键（运行时零依赖）。
 import type {} from '@meomeo-dev/dsh-voice/client'
+import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { VoiceTtsHeaderAction, type VoiceTtsHeaderInjected } from './VoiceTtsHeaderAction.tsx'
 import { VoiceTtsMenu, type VoiceTtsInjected } from './VoiceTtsMenu.tsx'
+import { TurnTailPlayer } from './TurnTailPlayer.tsx'
 import { en, NS, zh, type VoiceTtsSlotKey } from './locales.ts'
 import { getPanelUrl, getState, stop, toggle } from './api.ts'
 
@@ -23,6 +25,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 export const inject = ['slots', 'locale']
+
+/** turn-tail chain 选择器：始终当选，matched = turn 号（纯函数，仅 owner props）。 */
+function selectTurn({ turn }: TurnTailOwnerProps): number {
+  return turn.turn
+}
 
 /**
  * 客户端插件体：注册 locale 字典 + 两个互补入口。
@@ -71,5 +78,16 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: actions,
     }, VoiceTtsMenu),
+  )
+
+  // turn 末尾吸附的播放控制器（chain slot，每个 turn-tail 节点各渲染一个）。
+  ctx.slots.inject(
+    'conversation.chat.turnTail',
+    () => ctx.slots.register({
+      name: 'conversation.chat.turnTail',
+      locale: NS,
+      select: selectTurn,
+      priority: 0,
+    }, TurnTailPlayer),
   )
 }

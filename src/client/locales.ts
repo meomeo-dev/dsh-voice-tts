@@ -15,6 +15,12 @@ const en = {
   'menu.stop.sub.idle': 'Not playing',
   'dialog.title': 'Set voice tts',
   'dialog.unavailable': 'The standalone panel is not available (web mode + panel dist required).',
+  'player.play': 'Play this turn speech',
+  'player.stop': 'Stop playback',
+  'player.regenerate.title': 'Regenerate speech',
+  'player.regenerate.prompt': 'No cached speech for this turn. Regenerate TTS now?',
+  'player.regenerate.confirm': 'Regenerate',
+  'player.regenerate.cancel': 'Cancel',
 } as const
 
 export type VoiceTtsSlotKey = keyof typeof en
@@ -31,6 +37,12 @@ const zh: Record<VoiceTtsSlotKey, string> = {
   'menu.stop.sub.idle': '未播放',
   'dialog.title': 'Set voice tts',
   'dialog.unavailable': '独立面板不可用（需 web 模式且已构建 panel dist）。',
+  'player.play': '播放本 turn 语音',
+  'player.stop': '停止播放',
+  'player.regenerate.title': '重新生成语音',
+  'player.regenerate.prompt': '该 turn 没有缓存的语音，是否重新生成 TTS？',
+  'player.regenerate.confirm': '重新生成',
+  'player.regenerate.cancel': '取消',
 }
 
 export { en, zh }

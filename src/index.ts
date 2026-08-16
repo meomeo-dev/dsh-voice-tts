@@ -15,7 +15,7 @@ import z from '@deepseek-ai/schemastery'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type { SettingsScope } from '@deepseek-ai/dsh-settings'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
-import type {} from '@deepseek-ai/dsh-session'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { TtsService } from './service.js'
 import { VolcengineTtsProvider } from './provider-volcengine.js'
@@ -41,7 +41,7 @@ import {
 } from './command.js'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-client-connection'
-import { registerSlotRoutes } from './slot-routes.js'
+import { registerSlotRoutes, type TurnAudioStatus } from './slot-routes.js'
 import {
   assetContentType,
   ASSET_PREFIX,
@@ -666,6 +666,46 @@ export function apply(ctx: Context): void {
   // 串行播放队列:所有 host_play 经它排队,一次只播一个。
   const playerQueue = new PlayerQueue()
 
+  // 内存音频注册表:`sessionId:turn` → 逐 run 落盘路径 + 格式。turn/end 交付成功后登记,
+  // 供 `/voice-tts/audio-status|audio` 定位浏览器回放文件;进程重启后清空(见设计文档)。
+  interface TurnAudioEntry {
+    readonly paths: readonly string[]
+    readonly format: string
+  }
+  const audioByTurn = new Map<string, TurnAudioEntry>()
+  const audioKey = (sessionId: string, turn: number): string => `${sessionId}:${turn}`
+
+  const audioStatus = (sessionId: string, turn: number): TurnAudioStatus => {
+    const entry = audioByTurn.get(audioKey(sessionId, turn))
+    return entry === undefined
+      ? { exists: false, segments: 0, format: null }
+      : { exists: true, segments: entry.paths.length, format: entry.format }
+  }
+
+  const audioFile = (sessionId: string, turn: number, index: number): { path: string; format: string } | undefined => {
+    const entry = audioByTurn.get(audioKey(sessionId, turn))
+    if (entry === undefined || index < 0 || index >= entry.paths.length) return undefined
+    return { path: entry.paths[index]!, format: entry.format }
+  }
+
+  // 重新生成某 turn 的最终回复语音:从 live session 日志提取文本 → 复用 deliverSpeech →
+  // 登记注册表。delivery=off 时强制 file(用户显式点了「重新生成」,必须产出可播放文件)。
+  const regenerateTurn = async (sessionId: string, turn: number): Promise<TurnAudioStatus> => {
+    const session = ctx.sessions.get(SessionId(sessionId))
+    if (session === undefined) throw new Error(`session ${sessionId} is not live`)
+    const raw = finalAssistantText(session.events as readonly TurnEventLike[], turn)
+    if (raw === undefined) throw new Error(`turn ${turn} has no final assistant message`)
+    const text = sanitizeForSpeech(raw)
+    if (text.length === 0) throw new Error(`turn ${turn} has no speechable text`)
+    const settings = activeSettings
+    const delivery: VoiceTtsSettings['delivery'] = settings.delivery === 'off' ? 'file' : settings.delivery
+    const cwd = session.header.cwd ?? process.cwd()
+    const baseName = `dsh-voice-tts-${sessionId}-turn-${turn}`
+    const outcome = await deliverSpeech(tts, settings, cwd, baseName, text, delivery, resolveVoiceId(session.id, session.header.cwd), playerQueue, line => ctx.logger.warn('dsh-voice-tts: %s', line))
+    audioByTurn.set(audioKey(sessionId, turn), { paths: outcome.paths, format: outcome.format })
+    return { exists: true, segments: outcome.paths.length, format: outcome.format }
+  }
+
   // turn-final 交付:delivery=off 不处理;否则每轮结束把最终回复按 delivery 交付。
   ctx.on('session/event', (session, event) => {
     if (event.type !== 'turn/end') return
@@ -681,6 +721,7 @@ export function apply(ctx: Context): void {
     const baseName = `dsh-voice-tts-${String(session.id)}-turn-${event.data.turn}`
     void deliverSpeech(tts, settings, cwd, baseName, text, settings.delivery, resolveVoiceId(session.id, session.header.cwd), playerQueue, line => ctx.logger.warn('dsh-voice-tts: %s', line))
       .then(outcome => {
+        audioByTurn.set(audioKey(String(session.id), event.data.turn), { paths: outcome.paths, format: outcome.format })
         const played = outcome.played ? ' (played)' : ''
         ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', event.data.turn, outcome.totalBytes, outcome.format, played, outcome.paths.join(', '))
       })
@@ -772,6 +813,9 @@ export function apply(ctx: Context): void {
       toggle: toggleDelivery,
       stopPlay: () => { playerQueue.stop() },
       panelUrl: () => (panelToken !== undefined && panelPort !== undefined ? panelUrl(panelPort, panelToken) : null),
+      audioStatus,
+      audioFile,
+      regenerate: regenerateTurn,
     })
   })
 }

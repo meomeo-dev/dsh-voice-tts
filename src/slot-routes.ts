@@ -8,10 +8,21 @@
  * @module dsh-voice-tts/slot-routes
  */
 
+import { createReadStream, statSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { DeliveryMode } from './types.js'
+
+/** 某 turn 缓存音频的查询结果（audio-status / regenerate 共用）。 */
+export interface TurnAudioStatus {
+  /** 该 turn 是否已有缓存音频。 */
+  readonly exists: boolean
+  /** 缓存音频的分段数（多 run 时 >1；不存在时 0）。 */
+  readonly segments: number
+  /** 缓存音频的格式（决定 Content-Type 与 `<audio>` 兼容性）；不存在时 null。 */
+  readonly format: string | null
+}
 
 /** 路由的注入依赖(由 index.ts 闭包提供)。 */
 export interface SlotRoutesDeps {
@@ -23,6 +34,12 @@ export interface SlotRoutesDeps {
   stopPlay(): void
   /** 面板 URL(无面板时为 null)。 */
   panelUrl(): string | null
+  /** 查某 turn 的缓存音频状态。 */
+  audioStatus(sessionId: string, turn: number): TurnAudioStatus
+  /** 取某 turn 某段缓存音频的落盘路径与格式;未命中返回 undefined。 */
+  audioFile(sessionId: string, turn: number, index: number): { path: string; format: string } | undefined
+  /** 重新生成某 turn 的最终回复语音,返回新状态。 */
+  regenerate(sessionId: string, turn: number): Promise<TurnAudioStatus>
 }
 
 /** 请求体字节上限。 */
@@ -31,6 +48,27 @@ const MAX_BODY_BYTES = 64 * 1024
 /** 消息文本。 */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** 音讯格式 → HTTP Content-Type(浏览器 `<audio>` 按此解析时长/播放)。 */
+export function audioContentType(format: string): string {
+  switch (format) {
+    case 'mp3': return 'audio/mpeg'
+    case 'wav': return 'audio/wav'
+    case 'aiff': return 'audio/aiff'
+    case 'ogg_opus': return 'audio/ogg'
+    case 'opus': return 'audio/ogg'
+    case 'pcm': return 'audio/L16'
+    default: return 'application/octet-stream'
+  }
+}
+
+/** 从 URL 查询串读一个非负整数参数;缺失/非法返回 undefined。 */
+export function queryInt(url: string | undefined, name: string): number | undefined {
+  const raw = new URL(url ?? '/', 'http://x').searchParams.get(name)
+  if (raw === null || raw.length === 0) return undefined
+  const value = Number(raw)
+  return Number.isInteger(value) && value >= 0 ? value : undefined
 }
 
 /** HTTP 失败(业务失败统一 400)。 */
@@ -134,4 +172,66 @@ export function registerSlotRoutes(ctx: Context, deps: SlotRoutesDeps): void {
       })
     },
   }), 'dsh-voice-tts: /voice-tts/panel-url')
+
+  // 读请求体里的 sessionId/turn(非法时折叠为「不存在」,audioStatus/regenerate 各自兜底)。
+  const sessionTurnOf = (body: unknown): { sessionId: string; turn: number } => {
+    const sessionId = typeof body === 'object' && body !== null && typeof (body as Record<string, unknown>).sessionId === 'string'
+      ? (body as Record<string, unknown>).sessionId as string
+      : ''
+    const turn = typeof body === 'object' && body !== null && typeof (body as Record<string, unknown>).turn === 'number'
+      ? (body as Record<string, unknown>).turn as number
+      : -1
+    return { sessionId, turn }
+  }
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/audio-status',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        const { sessionId, turn } = sessionTurnOf(await readJsonBody(req))
+        return deps.audioStatus(sessionId, turn)
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/audio-status')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/audio',
+    handler: async (req, res) => {
+      const sessionId = new URL(req.url ?? '/', 'http://x').searchParams.get('sessionId') ?? ''
+      const turn = queryInt(req.url, 'turn')
+      const index = queryInt(req.url, 'index')
+      if (turn === undefined || index === undefined) {
+        res.writeHead(400)
+        res.end()
+        return
+      }
+      const file = deps.audioFile(sessionId, turn, index)
+      if (file === undefined) {
+        res.writeHead(404)
+        res.end()
+        return
+      }
+      const size = statSync(file.path).size
+      res.writeHead(200, {
+        'content-type': audioContentType(file.format),
+        'content-length': size,
+        'accept-ranges': 'bytes',
+        'cache-control': 'no-cache',
+      })
+      createReadStream(file.path).pipe(res)
+    },
+  }), 'dsh-voice-tts: /voice-tts/audio')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/regenerate',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        const { sessionId, turn } = sessionTurnOf(await readJsonBody(req))
+        return await deps.regenerate(sessionId, turn)
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/regenerate')
 }

@@ -60,3 +60,25 @@ export function stop(): Promise<{ playing: boolean }> {
 export function getPanelUrl(): Promise<{ url: string | null }> {
   return routeFetch<{ url: string | null }>('/voice-tts/panel-url', {})
 }
+
+/** 某 turn 缓存音频的状态（镜像 host 侧 `TurnAudioStatus`）。 */
+export interface TurnAudioStatus {
+  exists: boolean
+  segments: number
+  format: string | null
+}
+
+/** 查某 turn 是否有缓存音频。 */
+export function audioStatus(sessionId: string, turn: number): Promise<TurnAudioStatus> {
+  return routeFetch<TurnAudioStatus>('/voice-tts/audio-status', { sessionId, turn })
+}
+
+/** 重新生成某 turn 的最终回复语音。 */
+export function regenerate(sessionId: string, turn: number): Promise<TurnAudioStatus> {
+  return routeFetch<TurnAudioStatus>('/voice-tts/regenerate', { sessionId, turn })
+}
+
+/** 某 turn 某段缓存音频的 URL（`<audio src>` 走 GET）。 */
+export function audioUrl(sessionId: string, turn: number, index: number): string {
+  return `/voice-tts/audio?sessionId=${encodeURIComponent(sessionId)}&turn=${encodeURIComponent(String(turn))}&index=${encodeURIComponent(String(index))}`
+}
