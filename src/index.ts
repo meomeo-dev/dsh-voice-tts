@@ -39,6 +39,7 @@ import {
 } from './command.js'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-client-connection'
+import { registerSlotRoutes } from './slot-routes.js'
 import {
   assetContentType,
   ASSET_PREFIX,
@@ -168,6 +169,9 @@ function describeError(error: unknown): string {
 
 /** 当前已注册的 voice-tts 设置作用域(settings 挂载后赋值;面板 RPC 经它读写)。 */
 let activeScope: SettingsScope<VoiceTtsSettings> | undefined
+
+/** 上次非 off 的 delivery(「Turn on/off」从 off 切回时恢复它)。 */
+let lastOnDelivery: VoiceTtsSettings['delivery'] = 'host_play'
 
 /** 面板访问 token 与监听端口(registerPanel 启动时赋值;`ui` 命令用它打印 URL)。 */
 let panelToken: string | undefined
@@ -627,8 +631,10 @@ export function apply(ctx: Context): void {
     const scope = sctx.settings.register(NAMESPACE, SCHEMA)
     activeScope = scope
     activeSettings = scope.get()
+    if (activeSettings.delivery !== 'off') lastOnDelivery = activeSettings.delivery
     scope.watch(next => {
       activeSettings = next
+      if (next.delivery !== 'off') lastOnDelivery = next.delivery
     })
     ctx.commands.register({
       name: 'dsh-voice-tts',
@@ -686,4 +692,23 @@ export function apply(ctx: Context): void {
 
   // Web 配置面板:webServer + connection 同时存在时注册(web 模式);否则静默跳过。
   registerPanel(ctx, tts, resolveVoiceId)
+
+  // 切换 on/off:off → 恢复 lastOnDelivery;非 off → 记住当前值并写 off。
+  const toggleDelivery = async (): Promise<VoiceTtsSettings['delivery']> => {
+    const scope = activeScope
+    if (scope === undefined) throw new Error('settings service is not available')
+    const next = scope.get().delivery === 'off' ? lastOnDelivery : 'off'
+    await scope.update({ delivery: next })
+    return next
+  }
+
+  // Web UI slot 路由(webServer 存在时挂;headless 下静默不挂)。
+  ctx.inject(['webServer'], (wctx) => {
+    registerSlotRoutes(wctx, {
+      state: () => ({ delivery: activeSettings.delivery, playing: playerQueue.isPlaying() }),
+      toggle: toggleDelivery,
+      stopPlay: () => { playerQueue.stop() },
+      panelUrl: () => (panelToken !== undefined && panelPort !== undefined ? panelUrl(panelPort, panelToken) : null),
+    })
+  })
 }

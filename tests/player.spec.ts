@@ -25,21 +25,26 @@ describe('resolvePlayer', () => {
   })
 })
 
-/** 可手动触发 exit/error 的假子进程。 */
+/** 可手动触发 exit/error 的假子进程（每事件支持多监听器，模拟 Node 的 on/once 并存）。 */
 class FakeChild {
   stderr = { on: vi.fn() }
-  private handlers: Record<string, (arg?: unknown) => void> = {}
+  kill = vi.fn()
+  private handlers: Record<string, Array<(arg?: unknown) => void>> = {}
 
   on(event: string, cb: (arg?: unknown) => void): void {
-    this.handlers[event] = cb
+    (this.handlers[event] ??= []).push(cb)
+  }
+
+  once(event: string, cb: (arg?: unknown) => void): void {
+    (this.handlers[event] ??= []).push(cb)
   }
 
   exit(code: number): void {
-    this.handlers['exit']?.(code)
+    for (const cb of this.handlers['exit'] ?? []) cb(code)
   }
 
   fail(err: Error): void {
-    this.handlers['error']?.(err)
+    for (const cb of this.handlers['error'] ?? []) cb(err)
   }
 }
 
@@ -108,5 +113,43 @@ describe('PlayerQueue', () => {
     children[1]!.exit(0)
     await expect(p1).rejects.toThrow()
     await expect(p2).resolves.toBeUndefined()
+  })
+
+  it('reports isPlaying while a file is playing', async () => {
+    const { children, spawnImpl } = fakeSpawn()
+    const q = new PlayerQueue()
+    expect(q.isPlaying()).toBe(false)
+    void q.enqueue({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
+    await flush()
+    expect(q.isPlaying()).toBe(true)
+    children[0]!.exit(0)
+    await flush()
+    expect(q.isPlaying()).toBe(false)
+  })
+
+  it('stop kills the current child and reports not playing', async () => {
+    const { children, spawnImpl } = fakeSpawn()
+    const q = new PlayerQueue()
+    void q.enqueue({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
+    await flush()
+    expect(q.isPlaying()).toBe(true)
+    q.stop()
+    expect(children[0]!.kill).toHaveBeenCalled()
+    expect(q.isPlaying()).toBe(false)
+  })
+
+  it('stop invalidates queued-but-not-started items', async () => {
+    const { calls, children, spawnImpl } = fakeSpawn()
+    const q = new PlayerQueue()
+    void q.enqueue({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
+    void q.enqueue({ path: '/b.wav', format: 'wav' }, 'darwin', spawnImpl)
+    await flush()
+    expect(calls.length).toBe(1)
+    q.stop()
+    await flush()
+    // 第二条已入队但被 stop 作废，不再 spawn。
+    expect(calls.length).toBe(1)
+    children[0]!.exit(0)
+    await flush()
   })
 })

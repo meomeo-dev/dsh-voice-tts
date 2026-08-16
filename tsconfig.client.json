@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": false,
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@deepseek-ai/dsh-client-runtime/client": ["../deepseek-harness/packages/client/runtime/lib/types/client"],
+      "@deepseek-ai/dsh-client-ui-conversation/client": ["../deepseek-harness/packages/client/ui-conversation/lib/types/client"],
+      "@deepseek-ai/dsh-client-ui-slots": ["../deepseek-harness/packages/client/ui-slots/lib/types"],
+      "@deepseek-ai/dsh-client-ui-primitives": ["../deepseek-harness/packages/client/ui-primitives/lib/types"],
+      "@deepseek-ai/dsh-client-locale/client": ["../deepseek-harness/packages/client/locale/lib/types/client"]
+    }
+  },
+  "include": ["src/client", "src/css-modules.d.ts"]
+}

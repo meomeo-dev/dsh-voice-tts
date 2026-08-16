@@ -112,9 +112,16 @@ export class PlayerQueue {
   /** 队尾 Promise:新播放项链在它之后,保证 FIFO 串行。 */
   private tail: Promise<void> = Promise.resolve()
 
+  /** 正在播放的子进程;无播放时为 undefined。 */
+  private current: ChildProcess | undefined
+
+  /** 停止纪元:每次 stop() 自增,使队列里未开始的项作废。 */
+  private epoch = 0
+
   /**
    * 入队播放一个文件。立即返回本条播放的 Promise(resolve/reject 在该条播完时),
-   * 实际发声时刻取决于队列里前面的项。
+   * 实际发声时刻取决于队列里前面的项。在 {@link stop} 之后入队的项仍会排队,
+   * 但之前已入队而未开始的项会因 epoch 变化被作废。
    * @param file - 待播放文件。
    * @param platform - 平台覆盖(单测用)。
    * @param spawnImpl - spawn 实现覆盖(单测用)。
@@ -125,9 +132,38 @@ export class PlayerQueue {
     platform: NodeJS.Platform = process.platform,
     spawnImpl: typeof spawn = spawn,
   ): Promise<void> {
-    const run = this.tail.then(() => playFileToCompletion(file, platform, spawnImpl))
-    // 用 catch 保活队尾:某条失败不影响后续条目的调度。
+    const queuedEpoch = this.epoch
+    // 捕获本轮 spawn 出的子进程,供 stop() 精确 kill;子进程退出时清除引用。
+    const captured = ((command: string, args: readonly string[], options: Parameters<typeof spawn>[2]) => {
+      const child = spawnImpl(command, args, options)
+      this.current = child
+      child.once('exit', () => {
+        if (this.current === child) this.current = undefined
+      })
+      return child
+    }) as typeof spawn
+    const run = this.tail.then(() => {
+      if (queuedEpoch !== this.epoch) return
+      return playFileToCompletion(file, platform, captured)
+    })
+    // 用 catch 保活队尾:某条失败(含被 stop 打断)不影响后续条目的调度。
     this.tail = run.catch(() => {})
     return run
+  }
+
+  /**
+   * 停止当前播放并作废队列里未开始的项:杀当前子进程,epoch 自增。
+   * 已 kill 的子进程触发 exit(非零/信号),其 enqueue promise reject,
+   * 由调用方(deliverSpeech)的 catch 兜底。
+   */
+  stop(): void {
+    this.epoch += 1
+    this.current?.kill()
+    this.current = undefined
+  }
+
+  /** 当前是否有正在播放的子进程。 */
+  isPlaying(): boolean {
+    return this.current !== undefined
   }
 }

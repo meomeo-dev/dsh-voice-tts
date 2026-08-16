@@ -1,0 +1,18 @@
+.modal {
+  width: min(860px, 92vw);
+}
+
+.frame {
+  display: block;
+  width: 100%;
+  height: 70vh;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ds-bg-platform, #f5f6f7);
+}
+
+.unavailable {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ds-label-caption, #adb2b8);
+}

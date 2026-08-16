@@ -1,0 +1,36 @@
+/** browser half 的 locale 字典（zh / en）。选项标签按需求保持英文。 */
+
+/** 本插件的 locale 命名空间。 */
+export const NS = 'voice-tts-slot'
+
+const en = {
+  'trigger.aria': 'Voice TTS settings',
+  'menu.setTts': 'Set voice tts',
+  'menu.toggle.off': 'Turn on voice tts',
+  'menu.toggle.on': 'Turn off voice tts',
+  'menu.toggle.sub.off': 'Current: off · click to turn on',
+  'menu.toggle.sub.on': 'Current: on · click to turn off',
+  'menu.stop': 'Stop Current Host Play',
+  'menu.stop.sub.playing': 'Playing',
+  'menu.stop.sub.idle': 'Not playing',
+  'dialog.title': 'Set voice tts',
+  'dialog.unavailable': 'The standalone panel is not available (web mode + panel dist required).',
+} as const
+
+export type VoiceTtsSlotKey = keyof typeof en
+
+const zh: Record<VoiceTtsSlotKey, string> = {
+  'trigger.aria': '语音合成设置',
+  'menu.setTts': 'Set voice tts',
+  'menu.toggle.off': 'Turn on voice tts',
+  'menu.toggle.on': 'Turn off voice tts',
+  'menu.toggle.sub.off': '当前状态: 关闭, 点击后开启',
+  'menu.toggle.sub.on': '当前状态: 开启, 点击后关闭',
+  'menu.stop': 'Stop Current Host Play',
+  'menu.stop.sub.playing': '播放中',
+  'menu.stop.sub.idle': '未播放',
+  'dialog.title': 'Set voice tts',
+  'dialog.unavailable': '独立面板不可用（需 web 模式且已构建 panel dist）。',
+}
+
+export { en, zh }
