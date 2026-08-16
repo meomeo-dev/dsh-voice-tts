@@ -1,6 +1,6 @@
 {
   "name": "@meomeo-dev/dsh-voice-tts",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Text-to-speech bundle for DeepSeek Harness — volcengine seed-tts-2.0 synthesis with an autoplay/manual play consumer and a web slot UI.",
   "repository": {
     "type": "git",
@@ -30,6 +30,9 @@
     "prepare": "pnpm clean && tsc -p tsconfig.json && tsdown && pnpm panel:build",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p src/web-ui/panel/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "sentence-splitter": "^5.0.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",

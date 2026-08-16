@@ -43,8 +43,14 @@ describe('segmentSentences', () => {
     ])
   })
 
-  it('splits on newlines as paragraph boundaries', () => {
-    expect(segmentSentences('第一行\n第二行。')).toEqual(['第一行', '第二行。'])
+  it('splits mixed Chinese and English by terminal punctuation', () => {
+    expect(segmentSentences('这段是中文。This is a sentence. 又是中文。')).toEqual([
+      '这段是中文。', 'This is a sentence.', '又是中文。',
+    ])
+  })
+
+  it('keeps newline content within a sentence (newline is not a boundary)', () => {
+    expect(segmentSentences('第一行\n第二行。')).toEqual(['第一行\n第二行。'])
   })
 })
 

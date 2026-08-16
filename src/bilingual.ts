@@ -1,13 +1,15 @@
 /**
  * 双语文本的切分、语言判定、bilingual 过滤与音色规划(纯函数,不 import cordis)。
  * 规则(对齐 design.md §bilingual):
- * - 连续双语文本按句子/段落切分,每句判定 `zh`/`en`/`mixed`。
+ * - 连续双语文本用 sentence-splitter 按句末符切句(同时正确处理中英文句界,
+ *   选型见 docs/sentence-splitting-selection.md),每句判定 `zh`/`en`/`mixed`。
  * - `bilingual` 过滤:both 全读;english_only 读英文+混合;chinese_only 读中文+混合。
  * - 中英混写句永远整句读,不做过滤。
  * - 各语言类别可用不同音色(voices),缺省回退 voice_type。
  * @module dsh-voice-tts/bilingual
  */
 
+import { split as splitSentences } from 'sentence-splitter'
 import type { BilingualMode, BilingualVoiceConfig, SentenceLang, VoiceSlot, VoiceTtsVoices } from './types.js'
 
 /** 一句已判定语言的文本。 */
@@ -40,68 +42,13 @@ export interface BilingualPlan {
 
 const CJK_RE = /[一-鿿]/
 const LATIN_RE = /[A-Za-z]/
-/** 中文全角句末符 + 英文 `!`/`?` 都是确定句界。 */
-const TERMINAL = new Set(['。', '！', '？', '；', '!', '?'])
-/** 英文常见缩写(其后的 `.` 不是句界)。 */
-const EN_ABBREV = new Set([
-  'mr', 'mrs', 'ms', 'dr', 'st', 'jr', 'sr', 'prof', 'rev', 'gen', 'vs', 'etc', 'eg', 'ie',
-  'no', 'fig', 'inc', 'ltd', 'co', 'corp', 'approx', 'dept', 'est', 'vol', 'ed', 'pp', 'al',
-])
 
-function isDigit(ch: string | undefined): boolean {
-  return ch !== undefined && ch >= '0' && ch <= '9'
-}
-
-function isLatin(ch: string | undefined): boolean {
-  return ch !== undefined && LATIN_RE.test(ch)
-}
-
-/** 判断 `.` 前的单词是否英文缩写(单字母或命中缩写表)。 */
-function isAbbrevPeriod(chars: readonly string[], i: number): boolean {
-  let j = i - 1
-  let word = ''
-  while (j >= 0 && isLatin(chars[j])) {
-    word = chars[j]! + word
-    j--
-  }
-  if (word.length === 1) return true
-  return EN_ABBREV.has(word.toLowerCase())
-}
-
-/** 判断 chars[i] 是否句界。 */
-function isTerminal(chars: readonly string[], i: number): boolean {
-  const ch = chars[i]
-  if (ch === undefined) return false
-  if (TERMINAL.has(ch)) return true
-  if (ch !== '.') return false
-  const prev = chars[i - 1]
-  const next = chars[i + 1]
-  if (next === '.') return false // 省略号 ".."
-  if (isLatin(next)) return false // 词中/缩写 "e.g." "U.S." "github.com"
-  if (isDigit(prev) && isDigit(next)) return false // 小数 "3.14"
-  if (isAbbrevPeriod(chars, i)) return false // "Mr." "Dr." 等
-  return true
-}
-
-/** 把文本切成句子(先按段落,段内按句末符)。 */
+/** 把文本切成句子(sentence-splitter,中英双语句界)。 */
 export function segmentSentences(text: string): string[] {
-  const paragraphs = text.split(/\r?\n+/).map(paragraph => paragraph.trim()).filter(paragraph => paragraph.length > 0)
-  const sentences: string[] = []
-  for (const paragraph of paragraphs) {
-    const chars = [...paragraph]
-    let buffer = ''
-    for (let i = 0; i < chars.length; i++) {
-      buffer += chars[i]
-      if (isTerminal(chars, i)) {
-        const sentence = buffer.trim()
-        if (sentence.length > 0) sentences.push(sentence)
-        buffer = ''
-      }
-    }
-    const tail = buffer.trim()
-    if (tail.length > 0) sentences.push(tail)
-  }
-  return sentences
+  return splitSentences(text)
+    .filter(node => node.type === 'Sentence')
+    .map(node => node.raw.trim())
+    .filter(sentence => sentence.length > 0)
 }
 
 /** 判定一句文本的语言类别。 */
