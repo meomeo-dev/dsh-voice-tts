@@ -25,7 +25,7 @@ import { DEFAULT_VOICE_TYPE, DEFAULT_VOLCENGINE_API_KEY_REF, VOLCENGINE_RESOURCE
 import { DEFAULT_SILICONFLOW_API_KEY_REF, DEFAULT_SILICONFLOW_MODEL, DEFAULT_SILICONFLOW_VOICE, SILICONFLOW_MODELS, SILICONFLOW_TUNABLE_PARAMS } from './siliconflow.js'
 import { DEFAULT_HOST_COMMAND, DEFAULT_HOST_RATE, HOST_OUTPUT_FORMAT } from './host.js'
 import type { BilingualVoiceConfig, TunableParam, VoiceSlot, VoiceTtsSettings } from './types.js'
-import { concatAudio, planBilingualSpeech } from './bilingual.js'
+import { planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
 import type { TurnEventLike } from './turn-final.js'
 import { PlayerQueue } from './player.js'
@@ -261,70 +261,92 @@ function synthConfig(settings: VoiceTtsSettings, voice: string, format: string, 
 }
 
 /**
- * 按当前配置把文本合成为音频字节(双语规划 + 分片合成 + 拼接)。
+ * 按当前配置逐 run 合成文本为音频字节数组(双语规划 + 分片合成,不拼接)。
+ * 每个 run 可能对应不同音色/参数,因此**不能**字节拼接成单段——WAV/AIFF 等
+ * 带 `RIFF`/`FORM` 长度头的容器格式,拼接后播放器只读到第一段。
  * @param tts - TTS 注册表。
  * @param settings - 已解析设置。
  * @param text - 待合成文本。
- * @param format - 合成格式,默认当前 provider 的 `format`(host_play 用 `play_format`)。
+ * @param format - 合成格式(host_play 用 play_format)。
  * @param voiceId - 当前 dsh-voice 的 voice id(命中 voice_profiles 时覆盖音色)。
- * @returns 拼接后的音频字节。
+ * @returns 逐 run 的音频字节数组(与 `planBilingualSpeech` 的 runs 一一对应)。
  */
-async function synthesizeSpeech(
+async function synthesizeRuns(
   tts: TtsService,
   settings: VoiceTtsSettings,
   text: string,
-  format?: string,
+  format: string,
   voiceId?: string,
-): Promise<Uint8Array> {
+): Promise<Uint8Array[]> {
   const view = deliveryView(settings)
-  const formatResolved = format ?? view.format
   const plan = planBilingualSpeech(text, view, voiceId)
   if (plan.runs.length === 0) {
     throw new Error(`no speechable sentences after bilingual=${view.bilingual} filter`)
   }
-  const parts: Uint8Array[] = []
+  const audios: Uint8Array[] = []
   for (const run of plan.runs) {
     const result = await tts.synthesize(settings.provider, {
       text: run.text,
-      config: synthConfig(settings, run.voice, formatResolved, run.params),
+      config: synthConfig(settings, run.voice, format, run.params),
     })
-    parts.push(result.audio)
+    audios.push(result.audio)
   }
-  return concatAudio(parts)
+  return audios
 }
 
 /**
- * 流式合成文本为音频字节(双语规划 + 逐分片收集 + 拼接)。
- * `stream` 交付用它:走 provider 的流式接口,前端消费端未来接入时直接改用
- * `tts.stream()` 逐分片推,当前退化为落盘完整音频。
+ * 逐 run 流式合成为音频字节数组(不拼接)。`stream` 交付用它:走 provider 的
+ * 流式接口,前端消费端未来接入时直接改用 `tts.stream()` 逐分片推,当前退化为
+ * 每个 run 一段完整音频。
  * @param tts - TTS 注册表。
  * @param settings - 已解析设置。
  * @param text - 待合成文本。
- * @param voiceId - 当前 dsh-voice 的 voice id(命中 voice_profiles 时覆盖音色)。
- * @returns 拼接后的音频字节。
+ * @param format - 合成格式。
+ * @param voiceId - 当前 dsh-voice 的 voice id。
+ * @returns 逐 run 的音频字节数组。
  */
-async function streamSpeech(tts: TtsService, settings: VoiceTtsSettings, text: string, voiceId?: string): Promise<Uint8Array> {
+async function streamRuns(
+  tts: TtsService,
+  settings: VoiceTtsSettings,
+  text: string,
+  format: string,
+  voiceId?: string,
+): Promise<Uint8Array[]> {
   const view = deliveryView(settings)
   const plan = planBilingualSpeech(text, view, voiceId)
   if (plan.runs.length === 0) {
     throw new Error(`no speechable sentences after bilingual=${view.bilingual} filter`)
   }
-  const parts: Uint8Array[] = []
+  const audios: Uint8Array[] = []
   for (const run of plan.runs) {
+    const parts: Uint8Array[] = []
     for await (const chunk of tts.stream(settings.provider, {
       text: run.text,
-      config: synthConfig(settings, run.voice, view.format, run.params),
+      config: synthConfig(settings, run.voice, format, run.params),
     })) {
       parts.push(chunk.audio)
     }
+    audios.push(concatRunChunks(parts))
   }
-  return concatAudio(parts)
+  return audios
 }
 
-/** 一次交付的结果:音频字节、落盘路径、是否触发本机播放、所用格式。 */
+/** 把同一 run 的流式分片拼成一段完整音频(同 run 内是同一格式、同一音色,可安全拼接)。 */
+function concatRunChunks(parts: readonly Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, part) => sum + part.byteLength, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const part of parts) {
+    out.set(part, offset)
+    offset += part.byteLength
+  }
+  return out
+}
+
+/** 一次交付的结果:总字节数、落盘路径列表、是否触发本机播放、所用格式。 */
 interface DeliveryOutcome {
-  readonly audio: Uint8Array
-  readonly path: string
+  readonly totalBytes: number
+  readonly paths: readonly string[]
   readonly played: boolean
   readonly format: string
 }
@@ -332,6 +354,8 @@ interface DeliveryOutcome {
 /**
  * 按 delivery 模式交付一次合成:off 拒绝;file 落盘;host_play 落盘 + 本机播放;
  * stream 流式合成落盘(前端消费未来接)。
+ * 多 run(不同音色/参数)时逐段独立成文件(单 run 保持原名,多 run 带 `-<i>` 序号),
+ * host_play 逐段串行入队播放——绝不把不同音色的容器格式音频字节拼接。
  * @param tts - TTS 注册表。
  * @param settings - 已解析设置。
  * @param cwd - 落盘目录。
@@ -355,26 +379,32 @@ async function deliverSpeech(
   if (delivery === 'off') {
     throw new Error('delivery is off')
   }
-  if (delivery === 'stream') {
-    const audio = await streamSpeech(tts, settings, text, voiceId)
-    const path = resolve(cwd, `${baseName}.${view.format}`)
-    writeFileSync(path, audio)
-    return { audio, path, played: false, format: view.format }
+  const format = delivery === 'host_play' ? view.play_format : view.format
+  const audios = delivery === 'stream'
+    ? await streamRuns(tts, settings, text, format, voiceId)
+    : await synthesizeRuns(tts, settings, text, format, voiceId)
+
+  const paths: string[] = []
+  let totalBytes = 0
+  for (let i = 0; i < audios.length; i++) {
+    const suffix = audios.length === 1 ? '' : `-${i}`
+    const path = resolve(cwd, `${baseName}${suffix}.${format}`)
+    writeFileSync(path, audios[i]!)
+    paths.push(path)
+    totalBytes += audios[i]!.byteLength
   }
+
+  let played = false
   if (delivery === 'host_play') {
-    const audio = await synthesizeSpeech(tts, settings, text, view.play_format, voiceId)
-    const path = resolve(cwd, `${baseName}.${view.play_format}`)
-    writeFileSync(path, audio)
+    played = true
     // 串行播放队列:一次只播一个,避免多会话/多 turn 并发抢占系统播放器。
-    void playerQueue.enqueue({ path, format: view.play_format }).catch(error => {
-      warn(`host_play failed: ${error.message}`)
-    })
-    return { audio, path, played: true, format: view.play_format }
+    for (const path of paths) {
+      void playerQueue.enqueue({ path, format }).catch(error => {
+        warn(`host_play failed: ${error.message}`)
+      })
+    }
   }
-  const audio = await synthesizeSpeech(tts, settings, text, view.format, voiceId)
-  const path = resolve(cwd, `${baseName}.${view.format}`)
-  writeFileSync(path, audio)
-  return { audio, path, played: false, format: view.format }
+  return { totalBytes, paths, played, format }
 }
 
 /**
@@ -433,7 +463,7 @@ async function executeTtsCommand(
         const cwd = invocation.agent.session.header.cwd ?? process.cwd()
         const outcome = await deliverSpeech(tts, settings, cwd, 'dsh-voice-tts-output', command.text, delivery, resolveVoiceId(invocation.agent.id, invocation.agent.session.header.cwd), playerQueue)
         const played = outcome.played ? ' (played)' : ''
-        return { kind: 'success', text: `synthesized ${outcome.audio.byteLength} bytes (${outcome.format})${played} -> ${outcome.path}` }
+        return { kind: 'success', text: `synthesized ${outcome.totalBytes} bytes (${outcome.format})${played} -> ${outcome.paths.join(', ')}` }
       } catch (error) {
         return { kind: 'error', text: `synthesis failed: ${describeError(error)}` }
       }
@@ -652,7 +682,7 @@ export function apply(ctx: Context): void {
     void deliverSpeech(tts, settings, cwd, baseName, text, settings.delivery, resolveVoiceId(session.id, session.header.cwd), playerQueue, line => ctx.logger.warn('dsh-voice-tts: %s', line))
       .then(outcome => {
         const played = outcome.played ? ' (played)' : ''
-        ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', event.data.turn, outcome.audio.byteLength, outcome.format, played, outcome.path)
+        ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', event.data.turn, outcome.totalBytes, outcome.format, played, outcome.paths.join(', '))
       })
       .catch(error => {
         ctx.logger.warn('dsh-voice-tts: turn-final delivery failed: %s', describeError(error))
