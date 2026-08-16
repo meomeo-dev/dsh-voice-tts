@@ -691,8 +691,17 @@ export function apply(ctx: Context): void {
   // 重新生成某 turn 的最终回复语音:从 live session 日志提取文本 → 复用 deliverSpeech →
   // 登记注册表。delivery=off 时强制 file(用户显式点了「重新生成」,必须产出可播放文件)。
   const regenerateTurn = async (sessionId: string, turn: number): Promise<TurnAudioStatus> => {
-    const session = ctx.sessions.get(SessionId(sessionId))
-    if (session === undefined) throw new Error(`session ${sessionId} is not live`)
+    ctx.logger.info('dsh-voice-tts: regenerate turn=%d session=%s', turn, sessionId)
+    // `ctx.get('sessions')` 是 strict 全局 store 读;`ctx.sessions` property 代理是
+    // topology-sensitive 的(需在 inject 里声明),见 packages/CLAUDE.md optional-services 约定。
+    const sessions = ctx.get('sessions')
+    if (sessions === undefined) throw new Error('sessions service is not available')
+    const session = sessions.get(SessionId(sessionId))
+    if (session === undefined) {
+      const live = sessions.list().map(s => String(s.id)).join(', ')
+      ctx.logger.warn('dsh-voice-tts: regenerate failed — session %s not live (live: %s)', sessionId, live || '<none>')
+      throw new Error(`session ${sessionId} is not live`)
+    }
     const raw = finalAssistantText(session.events as readonly TurnEventLike[], turn)
     if (raw === undefined) throw new Error(`turn ${turn} has no final assistant message`)
     const text = sanitizeForSpeech(raw)
@@ -701,8 +710,10 @@ export function apply(ctx: Context): void {
     const delivery: VoiceTtsSettings['delivery'] = settings.delivery === 'off' ? 'file' : settings.delivery
     const cwd = session.header.cwd ?? process.cwd()
     const baseName = `dsh-voice-tts-${sessionId}-turn-${turn}`
+    ctx.logger.info('dsh-voice-tts: regenerate synthesizing (delivery=%s, provider=%s)', delivery, settings.provider)
     const outcome = await deliverSpeech(tts, settings, cwd, baseName, text, delivery, resolveVoiceId(session.id, session.header.cwd), playerQueue, line => ctx.logger.warn('dsh-voice-tts: %s', line))
     audioByTurn.set(audioKey(sessionId, turn), { paths: outcome.paths, format: outcome.format })
+    ctx.logger.info('dsh-voice-tts: regenerate done -> %s', outcome.paths.join(', '))
     return { exists: true, segments: outcome.paths.length, format: outcome.format }
   }
 

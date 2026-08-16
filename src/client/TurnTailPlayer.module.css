@@ -63,6 +63,15 @@
   display: none;
 }
 
+.error {
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-state-error-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
 .modal {
   width: min(360px, 90vw);
 }
@@ -88,9 +97,9 @@
 }
 
 .modalPrimary {
-  border: 1px solid var(--dsw-alias-brand-primary);
-  background: var(--dsw-alias-brand-primary);
-  color: var(--dsw-alias-brand-primary-invert);
+  border: none;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
 }
 
 .modalPrimary:disabled {

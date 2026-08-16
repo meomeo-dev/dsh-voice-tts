@@ -21,6 +21,7 @@ const en = {
   'player.regenerate.prompt': 'No cached speech for this turn. Regenerate TTS now?',
   'player.regenerate.confirm': 'Regenerate',
   'player.regenerate.cancel': 'Cancel',
+  'player.regenerate.failed': 'Regeneration produced no audio.',
 } as const
 
 export type VoiceTtsSlotKey = keyof typeof en
@@ -43,6 +44,7 @@ const zh: Record<VoiceTtsSlotKey, string> = {
   'player.regenerate.prompt': '该 turn 没有缓存的语音，是否重新生成 TTS？',
   'player.regenerate.confirm': '重新生成',
   'player.regenerate.cancel': '取消',
+  'player.regenerate.failed': '重新生成未产出音频。',
 }
 
 export { en, zh }

@@ -42,6 +42,7 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
   const [playing, setPlaying] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const stop = (): void => {
     const audio = audioRef.current
@@ -75,12 +76,13 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
   const onPlayClick = async (): Promise<void> => {
     if (busy || playing) return
     setBusy(true)
+    setError(null)
     try {
       const status = await audioStatus(String(sessionId), turnNum)
       if (status.exists) startFromStatus(status.segments)
       else setModalOpen(true)
-    } catch {
-      // loopback 内部 API；host 不可达时静默失败。
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
@@ -89,11 +91,13 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
   const onRegenerate = async (): Promise<void> => {
     setModalOpen(false)
     setBusy(true)
+    setError(null)
     try {
       const status = await regenerate(String(sessionId), turnNum)
       if (status.exists) startFromStatus(status.segments)
-    } catch {
-      // 重生成失败静默；用户可再次点击 ▶ 重试。
+      else setError(t('player.regenerate.failed'))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
@@ -112,7 +116,7 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
         disabled={busy}
         onClick={() => { if (playing) stop(); else void onPlayClick() }}
       >
-        {playing ? '■' : '▶'}
+        {playing ? '■' : (busy ? '…' : '▶')}
       </button>
       {playing && (
         <span className={css.readout}>
@@ -121,6 +125,9 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
             <span className={css.fill} style={{ width: `${progress * 100}%` }} />
           </span>
         </span>
+      )}
+      {error !== null && (
+        <span className={css.error} title={error}>{error}</span>
       )}
       <audio
         ref={audioRef}
