@@ -363,7 +363,7 @@ async function executeTtsCommand(
   tts: TtsService,
   scope: SettingsScope<VoiceTtsSettings>,
   invocation: CommandInvocation,
-  resolveVoiceId: () => string | undefined,
+  resolveVoiceId: (sessionId?: string, cwd?: string) => string | undefined,
   playerQueue: PlayerQueue,
 ): Promise<CommandResult> {
   const command = parseTtsCommand(invocation.rawInput)
@@ -406,7 +406,7 @@ async function executeTtsCommand(
       const delivery = command.delivery ?? settings.delivery
       try {
         const cwd = invocation.agent.session.header.cwd ?? process.cwd()
-        const outcome = await deliverSpeech(tts, settings, cwd, 'dsh-voice-tts-output', command.text, delivery, resolveVoiceId(), playerQueue)
+        const outcome = await deliverSpeech(tts, settings, cwd, 'dsh-voice-tts-output', command.text, delivery, resolveVoiceId(invocation.agent.id, invocation.agent.session.header.cwd), playerQueue)
         const played = outcome.played ? ' (played)' : ''
         return { kind: 'success', text: `synthesized ${outcome.audio.byteLength} bytes (${outcome.format})${played} -> ${outcome.path}` }
       } catch (error) {
@@ -441,7 +441,7 @@ async function executeTtsCommand(
  * @param tts - TTS 注册表(音色表来源)。
  * @param resolveVoiceId - 软读当前 dsh-voice id。
  */
-function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: () => string | undefined): void {
+function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: (sessionId?: string, cwd?: string) => string | undefined): void {
   const web = ctx.get('webServer')
   if (web === undefined) return
   const panelDir = findPanelDist()
@@ -565,13 +565,19 @@ export function apply(ctx: Context): void {
   // 当前生效设置(settings 挂载前为默认,挂载后随 watch 更新)。
   let activeSettings: VoiceTtsSettings = DEFAULT_SETTINGS
 
-  // 软读 dsh-voice 的当前 voice id(`voice.tone`),用于 per-voice 音色映射。
-  // 无 dsh-voice(settings 不存在或 voice 命名空间未注册)时返回 undefined,映射自动跳过。
-  const resolveVoiceId = (): string | undefined => {
+  // 软读 dsh-voice 的「当前会话生效 voice id」(会话 → 工作区 → 用户 → legacy),
+  // 用于 per-voice 音色映射。优先走 dsh-voice 暴露的 `ctx.voice` 选择解析服务
+  // (单一真相源,不重复折叠);无该服务(未装 dsh-voice)时回退 legacy `voice.tone`。
+  const resolveVoiceId = (sessionId?: string, cwd?: string): string | undefined => {
+    const voice = ctx.get('voice') as { resolveEffective?: (sessionId?: string, cwd?: string) => string } | undefined
+    if (voice?.resolveEffective !== undefined) {
+      const id = voice.resolveEffective(sessionId, cwd)
+      return id === 'off' ? undefined : id
+    }
     const settings = ctx.get('settings')
     if (settings === undefined) return undefined
-    const voice = settings.get(settingsNamespace('voice')) as { tone?: string } | undefined
-    return voice?.tone
+    const tone = (settings.get(settingsNamespace('voice')) as { tone?: string } | undefined)?.tone
+    return tone === undefined || tone === '' || tone === 'off' ? undefined : tone
   }
 
   // 取某 provider 的凭证引用名(KEY NAME)。未知 provider 抛错。
@@ -616,7 +622,7 @@ export function apply(ctx: Context): void {
     const cwd = session.header.cwd ?? process.cwd()
     // 文件名带 session id + turn,避免多会话同 cwd 下同名覆盖、互相抢占。
     const baseName = `dsh-voice-tts-${String(session.id)}-turn-${event.data.turn}`
-    void deliverSpeech(tts, settings, cwd, baseName, text, settings.delivery, resolveVoiceId(), playerQueue, line => ctx.logger.warn('dsh-voice-tts: %s', line))
+    void deliverSpeech(tts, settings, cwd, baseName, text, settings.delivery, resolveVoiceId(session.id, session.header.cwd), playerQueue, line => ctx.logger.warn('dsh-voice-tts: %s', line))
       .then(outcome => {
         const played = outcome.played ? ' (played)' : ''
         ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', event.data.turn, outcome.audio.byteLength, outcome.format, played, outcome.path)

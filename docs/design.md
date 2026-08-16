@@ -264,7 +264,7 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`)。每个 provider �
 
 `voices` 是「全局默认」的三语言音色;`voice_profiles` 是按 dsh-voice 当前口吻 id 覆盖的整套 voices,让「乔布斯」用男声、「少女」用女声等口吻与音色联动:
 
-1. **命中来源**:插件软读 dsh-voice 的当前 voice id(`settings.get(settingsNamespace('voice')).tone`,如 `steve-jobs`)。dsh-voice 只把口吻存在 settings 命名空间 `voice` 的 `tone` 字段、不暴露服务,故跨 bundle 用 settings 软读(对齐 dsh-voice 自身 `ctx.get('settings').get(...)` 的做法)。
+1. **命中来源**:插件软读 dsh-voice 暴露的选择解析服务 `ctx.voice.resolveEffective(sessionId, cwd)`,拿到「当前会话生效 voice id」(会话 → 工作区 → 用户 → legacy 三级折叠,单一真相源)。未安装 dsh-voice 时该服务不存在,回退 legacy `settings.voice.tone` 单层默认;`off` 视为无口吻,映射自动跳过。
 2. **解析规则**:`effectiveVoices(config, voiceId)` 返回 `config.voice_profiles[voiceId] ?? config.voices`——命中 profile 则**整体替换** voices(profile 未填的类别仍回退 `voice_type`),未命中(voiceId 为 `undefined`、未映射)则回退全局 `voices`。每个槽位是对象 `{ voice_type, ...可调参数 }`,命中即同时覆盖音色与参数。
 3. **接线**:`/dsh-voice-tts speak` 与 `turn/end` 自动合成都先 `resolveVoiceId()` 拿到当前口吻 id,再把 `voiceId` 透传给 `planBilingualSpeech(text, config, voiceId)`,后续分句/过滤/音色分配/合并/拼接逻辑不变。
 4. **软读语义**:无 dsh-voice(settings 未挂载或 `voice` 命名空间未注册)时 `voiceId` 为 `undefined`,`voice_profiles` 自动跳过,退回全局 `voices`——不影响无 dsh-voice 的纯 TTS 使用。
