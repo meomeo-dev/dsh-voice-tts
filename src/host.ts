@@ -21,6 +21,17 @@ export const DEFAULT_HOST_RATE = 175
 /** `say` 输出音频格式(AIFF,默认且无需额外格式旗标)。 */
 export const HOST_OUTPUT_FORMAT = 'aiff'
 
+/** 推荐音色的展示名前缀(只影响展示,不污染 `voice_type`)。 */
+export const RECOMMENDED_PREFIX = '(推荐) '
+
+/** 推荐音色:新一代大陆简体中文神经音色,名以该后缀结尾。 */
+const RECOMMENDED_ZH_SUFFIX = '(Chinese (China mainland))'
+
+/** 判定一个 `say` 音色名是否为推荐音色(新一代大陆简体中文)。 */
+export function isRecommendedSayVoice(name: string): boolean {
+  return name.endsWith(RECOMMENDED_ZH_SUFFIX)
+}
+
 /** host provider 的完整配置模板(对齐 docs/host-provider-say.md)。 */
 export const HOST_CONFIG_TEMPLATE: ConfigTemplate = {
   provider: 'host',
@@ -143,6 +154,8 @@ export async function synthesizeSay(
 /**
  * 解析 `say -v '?'` 的输出为音色表。行格式:
  * `<name 右填充> <locale>  # <comment>`,name 可含空格(如 `Bad News`)。
+ * 推荐音色(新一代大陆简体中文,名以 `(Chinese (China mainland))` 结尾)的展示名
+ * 加 `(推荐) ` 前缀;`voice_type` 保持原始名,`-v` 参数仍直接可用。
  * @param text - `say -v '?'` 的 stdout。
  * @returns 归一化后的音色列表。
  */
@@ -156,7 +169,7 @@ export function parseSayVoices(text: string): TtsVoice[] {
     if (name === undefined || name.length === 0) continue
     voices.push({
       voice_type: name,
-      name,
+      name: isRecommendedSayVoice(name) ? `${RECOMMENDED_PREFIX}${name}` : name,
       scene: '本地语音',
       lang: locale,
       ability: match[3] ?? '',

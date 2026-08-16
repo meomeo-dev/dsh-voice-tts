@@ -1,6 +1,6 @@
 {
   "name": "@meomeo-dev/dsh-voice-tts",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Text-to-speech bundle for DeepSeek Harness — volcengine seed-tts-2.0 synthesis with an autoplay/manual play consumer and a web slot UI.",
   "repository": {
     "type": "git",

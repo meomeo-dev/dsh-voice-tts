@@ -61,6 +61,24 @@ describe('parseSayVoices', () => {
   it('ignores non-voice lines', () => {
     expect(parseSayVoices('no voices here\n')).toEqual([])
   })
+
+  it('marks recommended mainland-Chinese voices with a prefix, keeping voice_type intact', () => {
+    const voices = parseSayVoices('Flo (Chinese (China mainland))  zh_CN  # 你好！我叫Flo。\n')
+    expect(voices).toHaveLength(1)
+    expect(voices[0]!.voice_type).toBe('Flo (Chinese (China mainland))')
+    expect(voices[0]!.name).toBe('(推荐) Flo (Chinese (China mainland))')
+  })
+
+  it('does not mark Taiwan or legacy voices as recommended', () => {
+    const voices = parseSayVoices([
+      'Flo (Chinese (Taiwan))  zh_TW  # 你好，我叫Flo。',
+      'Tingting  zh_CN  # 你好！我叫婷婷。',
+    ].join('\n'))
+    expect(voices.map(v => v.name)).toEqual([
+      'Flo (Chinese (Taiwan))',
+      'Tingting',
+    ])
+  })
 })
 
 describe('synthesizeSay', () => {
