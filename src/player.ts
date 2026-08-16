@@ -1,169 +1,220 @@
 /**
- * 本机后台播放(host_play 交付):跨平台探测系统播放器,非阻塞 spawn。
- * 只负责「在 host 进程所在的机器上发声」,与浏览器/前端无关。
+ * 本机播放器后端(host_play 交付):可暂停/可 seek 的进程封装。
+ *
+ * `afplay` 无 pause/seek 原语,故默认改用 ffplay 的 `-ss` 重启式 seek:
+ *   - 播放到位置 P:`ffplay -nodisp -autoexit -loglevel quiet -ss <P/1000> <file>`
+ *   - 暂停 = kill 子进程 + 记位;恢复 = 以记位 `-ss` 重启;seek = 记位 + 重启。
+ * 无 ffplay 时回退 afplay(仅 start/stop,pause/resume/seek 抛 `unsupported`)。
+ * 只负责「在 host 进程所在机器发声」,状态编排见 {@link ./playback.js}。
  * @module dsh-voice-tts/player
  */
 
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
 
-/** 一个可播放的文件(路径 + 扩展名)。 */
+/** 一个可播放的文件(路径 + 格式)。 */
 export interface PlayableFile {
   readonly path: string
   readonly format: string
 }
 
-/**
- * 按平台探测系统播放器的命令行。返回 `{ bin, args }`,其中 `args` 用 `{path}` 占位。
- * - macOS:`afplay <path>`
- * - Linux:`aplay <path>`(ALSA,wav)
- * - Windows:`powershell -NoProfile -Command (New-Object Media.SoundPlayer '<path>').PlaySync()`
- * @returns 播放器命令;无匹配平台返回 undefined。
- */
-export function resolvePlayer(platform: NodeJS.Platform = process.platform): { bin: string; args: (path: string) => string[] } | undefined {
-  switch (platform) {
-    case 'darwin':
-      return { bin: 'afplay', args: path => [path] }
-    case 'linux':
-      return { bin: 'aplay', args: path => [path] }
-    case 'win32':
-      return {
-        bin: 'powershell',
-        args: path => ['-NoProfile', '-Command', `(New-Object Media.SoundPlayer '${path}').PlaySync()`],
-      }
-    default:
-      return undefined
-  }
+/** 播放器后端能力:start/pause/resume/seek/stop + 结束回调。 */
+export interface AudioPlayer {
+  /** 从 `startMs` 开始播放(0 = 从头)。重复 start 前先 stop。 */
+  start(file: PlayableFile, startMs: number): void
+  /** 暂停(记位并停进程)。 */
+  pause(): void
+  /** 从暂停位恢复。 */
+  resume(): void
+  /** 跳到 `ms` 并(若在播)续播。 */
+  seek(ms: number): void
+  /** 停止并归零。 */
+  stop(): void
+  /** 当前播放位置(毫秒)。 */
+  position(): number
+  /** 是否有进程在播。 */
+  running(): boolean
+  /** 播放自然结束回调(每条一次)。 */
+  onEnded: (() => void) | null
+  /** 播放错误回调(spawn 失败/非零退出)。 */
+  onError: ((error: Error) => void) | null
 }
 
-/**
- * 非阻塞播放一个音频文件。返回子进程句柄;找不到平台播放器时返回 undefined。
- * 播放失败不抛出(后台播放不应影响会话),错误与退出码交给可选的 `onError` 回调。
- * @param file - 待播放文件。
- * @param onError - 可选错误回调,收到 spawn 失败、非零退出码或 stderr 内容。
- * @returns 子进程句柄;无匹配播放器则 undefined。
- */
-export function playFile(
-  file: PlayableFile,
-  onError?: (error: Error) => void,
-): ChildProcess | undefined {
-  const player = resolvePlayer()
-  if (player === undefined) {
-    onError?.(new Error(`no system player for platform "${process.platform}"`))
-    return undefined
-  }
-  // 捕获 stderr 与退出码:无声失败(spawn 失败、播放器报错)必须可见,不能静默吞掉。
-  const child = spawn(player.bin, player.args(file.path), { stdio: ['ignore', 'ignore', 'pipe'] })
-  let stderr = ''
-  child.stderr.on('data', chunk => {
-    stderr += String(chunk)
-  })
-  child.on('error', error => {
-    onError?.(error)
-  })
-  child.on('exit', (code, signal) => {
-    if (code !== 0 || stderr.trim().length > 0) {
-      onError?.(new Error(`player ${player.bin} exited code=${String(code)} signal=${String(signal)} stderr=${stderr.trim()}`))
+/** ffplay 候选路径(按探测顺序)。 */
+const FFPLAY_CANDIDATES = ['/opt/homebrew/bin/ffplay', '/usr/local/bin/ffplay', 'ffplay']
+
+/** 探测 ffplay 命令路径;`command` 非空时直接用(不探测存在性)。 */
+export function detectPlayerCommand(command = ''): string {
+  if (command !== '') return command
+  for (const candidate of FFPLAY_CANDIDATES) {
+    if (candidate.includes('/')) {
+      if (existsSync(candidate)) return candidate
+    } else {
+      return candidate // 纯命令名,交给 spawn 的 PATH 解析
     }
-  })
-  return child
+  }
+  return '/usr/bin/afplay'
 }
 
 /**
- * 播放一个音频文件并在**播放结束后**才 resolve(退出码 0 且无 stderr)。
- * 无匹配平台播放器、spawn 失败、非零退出码或 stderr 均 reject。
- * 供串行队列(见 {@link PlayerQueue})等待一条播完再播下一条。
- * @param file - 待播放文件。
- * @param platform - 平台覆盖(单测用),默认当前平台。
- * @param spawnImpl - spawn 实现覆盖(单测用)。
- * @returns 播放完成(或失败)的 Promise。
+ * ffplay 后端:`-ss` 重启式 seek,支持暂停/恢复/定位。
+ * 位置 = offsetMs(已消费的绝对位置)+ 若在播 (clock - lastResumeClock)。
  */
-export function playFileToCompletion(
-  file: PlayableFile,
-  platform: NodeJS.Platform = process.platform,
-  spawnImpl: typeof spawn = spawn,
-): Promise<void> {
-  const player = resolvePlayer(platform)
-  if (player === undefined) {
-    return Promise.reject(new Error(`no system player for platform "${platform}"`))
+export class FfplayPlayer implements AudioPlayer {
+  private child: ChildProcess | undefined
+  private file: PlayableFile | undefined
+  private offsetMs = 0
+  private playing = false
+  private lastResumeClock = 0
+
+  constructor(
+    private readonly command: string = detectPlayerCommand(),
+    private readonly clock: () => number = () => Date.now(),
+    private readonly spawnImpl: typeof spawn = spawn,
+  ) {}
+
+  onEnded: (() => void) | null = null
+  onError: ((error: Error) => void) | null = null
+
+  start(file: PlayableFile, startMs: number): void {
+    this.file = file
+    this.offsetMs = Math.max(0, startMs)
+    this.playFrom(this.offsetMs)
   }
-  return new Promise((resolve, reject) => {
-    const child = spawnImpl(player.bin, player.args(file.path), { stdio: ['ignore', 'ignore', 'pipe'] })
+
+  pause(): void {
+    if (!this.playing) return
+    this.offsetMs = this.position()
+    this.kill()
+    this.playing = false
+  }
+
+  resume(): void {
+    if (this.playing || this.file === undefined) return
+    this.playFrom(this.offsetMs)
+  }
+
+  seek(ms: number): void {
+    this.offsetMs = Math.max(0, ms)
+    if (this.playing) this.playFrom(this.offsetMs)
+  }
+
+  stop(): void {
+    this.kill()
+    this.playing = false
+    this.offsetMs = 0
+    this.file = undefined
+  }
+
+  position(): number {
+    if (this.file === undefined) return 0
+    return this.playing ? this.offsetMs + Math.max(0, this.clock() - this.lastResumeClock) : this.offsetMs
+  }
+
+  running(): boolean {
+    return this.playing
+  }
+
+  private playFrom(startMs: number): void {
+    this.kill()
+    const file = this.file
+    if (file === undefined) return
+    const args = ['-nodisp', '-autoexit', '-loglevel', 'quiet']
+    if (startMs > 0) args.push('-ss', String(startMs / 1000))
+    args.push(file.path)
+    const child = this.spawnImpl(this.command, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    this.child = child
+    this.playing = true
+    this.lastResumeClock = this.clock()
     let stderr = ''
     child.stderr.on('data', chunk => {
       stderr += String(chunk)
     })
-    child.on('error', reject)
-    child.on('exit', (code, signal) => {
-      if (code === 0 && stderr.trim().length === 0) {
-        resolve()
-      } else {
-        reject(new Error(`player ${player.bin} exited code=${String(code)} signal=${String(signal)} stderr=${stderr.trim()}`))
-      }
+    child.on('error', error => {
+      this.playing = false
+      this.onError?.(error)
     })
-  })
+    child.on('exit', (code, signal) => {
+      if (this.child !== child) return
+      this.child = undefined
+      this.playing = false
+      if (code === 0 || signal !== null) this.onEnded?.()
+      else if (code !== null && stderr.trim().length > 0) this.onError?.(new Error(`ffplay exited code=${String(code)} stderr=${stderr.trim()}`))
+      else this.onEnded?.()
+    })
+  }
+
+  private kill(): void {
+    const child = this.child
+    this.child = undefined
+    if (child !== undefined) child.kill()
+  }
 }
 
 /**
- * 串行播放队列:一次只播一个音频文件,前一条播完(或失败)才播下一条。
- * 解决多个会话 / 多个 turn 并发触发 host_play 时系统播放器被抢占、音频重叠的问题。
+ * afplay 后端(回退):仅 start/stop;pause/resume/seek 不支持(抛错)。
+ * 位置 = 墙钟近似(从 start 起)。
  */
-export class PlayerQueue {
-  /** 队尾 Promise:新播放项链在它之后,保证 FIFO 串行。 */
-  private tail: Promise<void> = Promise.resolve()
+export class AfplayPlayer implements AudioPlayer {
+  private child: ChildProcess | undefined
+  private startedAt = 0
+  private runningFlag = false
 
-  /** 正在播放的子进程;无播放时为 undefined。 */
-  private current: ChildProcess | undefined
+  constructor(
+    private readonly command = '/usr/bin/afplay',
+    private readonly clock: () => number = () => Date.now(),
+    private readonly spawnImpl: typeof spawn = spawn,
+  ) {}
 
-  /** 停止纪元:每次 stop() 自增,使队列里未开始的项作废。 */
-  private epoch = 0
+  onEnded: (() => void) | null = null
+  onError: ((error: Error) => void) | null = null
 
-  /**
-   * 入队播放一个文件。立即返回本条播放的 Promise(resolve/reject 在该条播完时),
-   * 实际发声时刻取决于队列里前面的项。在 {@link stop} 之后入队的项仍会排队,
-   * 但之前已入队而未开始的项会因 epoch 变化被作废。
-   * @param file - 待播放文件。
-   * @param platform - 平台覆盖(单测用)。
-   * @param spawnImpl - spawn 实现覆盖(单测用)。
-   * @returns 本条播放完成(或失败)的 Promise。
-   */
-  enqueue(
-    file: PlayableFile,
-    platform: NodeJS.Platform = process.platform,
-    spawnImpl: typeof spawn = spawn,
-  ): Promise<void> {
-    const queuedEpoch = this.epoch
-    // 捕获本轮 spawn 出的子进程,供 stop() 精确 kill;子进程退出时清除引用。
-    const captured = ((command: string, args: readonly string[], options: Parameters<typeof spawn>[2]) => {
-      const child = spawnImpl(command, args, options)
-      this.current = child
-      child.once('exit', () => {
-        if (this.current === child) this.current = undefined
-      })
-      return child
-    }) as typeof spawn
-    const run = this.tail.then(() => {
-      if (queuedEpoch !== this.epoch) return
-      return playFileToCompletion(file, platform, captured)
+  start(file: PlayableFile, _startMs: number): void {
+    this.startedAt = this.clock()
+    const child = this.spawnImpl(this.command, [file.path], { stdio: ['ignore', 'ignore', 'pipe'] })
+    this.child = child
+    this.runningFlag = true
+    let stderr = ''
+    child.stderr.on('data', chunk => {
+      stderr += String(chunk)
     })
-    // 用 catch 保活队尾:某条失败(含被 stop 打断)不影响后续条目的调度。
-    this.tail = run.catch(() => {})
-    return run
+    child.on('error', error => {
+      this.runningFlag = false
+      this.onError?.(error)
+    })
+    child.on('exit', (code, signal) => {
+      if (this.child !== child) return
+      this.child = undefined
+      this.runningFlag = false
+      if (code === 0 || signal !== null) this.onEnded?.()
+      else this.onError?.(new Error(`afplay exited code=${String(code)} stderr=${stderr.trim()}`))
+    })
   }
 
-  /**
-   * 停止当前播放并作废队列里未开始的项:杀当前子进程,epoch 自增。
-   * 已 kill 的子进程触发 exit(非零/信号),其 enqueue promise reject,
-   * 由调用方(deliverSpeech)的 catch 兜底。
-   */
+  pause(): void {
+    throw new Error('afplay does not support pause/seek')
+  }
+
+  resume(): void {
+    throw new Error('afplay does not support pause/seek')
+  }
+
+  seek(_ms: number): void {
+    throw new Error('afplay does not support pause/seek')
+  }
+
   stop(): void {
-    this.epoch += 1
-    this.current?.kill()
-    this.current = undefined
+    this.child?.kill()
+    this.child = undefined
+    this.runningFlag = false
   }
 
-  /** 当前是否有正在播放的子进程。 */
-  isPlaying(): boolean {
-    return this.current !== undefined
+  position(): number {
+    return this.runningFlag ? Math.max(0, this.clock() - this.startedAt) : 0
+  }
+
+  running(): boolean {
+    return this.runningFlag
   }
 }

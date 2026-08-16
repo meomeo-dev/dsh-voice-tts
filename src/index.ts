@@ -8,8 +8,8 @@
  * @module dsh-voice-tts
  */
 
-import { writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -28,8 +28,11 @@ import type { BilingualVoiceConfig, TunableParam, VoiceSlot, VoiceTtsSettings } 
 import { planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
 import type { TurnEventLike } from './turn-final.js'
-import { PlayerQueue } from './player.js'
 import { sanitizeForSpeech } from './sanitize.js'
+import { resolveStorageConfig, sessionDir, storageRootFor, turnBaseName } from './storage.js'
+import { audioDurationMs, loadCatalog, resolveTurnSegments, saveCatalog, upsert } from './catalog.js'
+import { PlaybackController } from './playback.js'
+import { AfplayPlayer, detectPlayerCommand, FfplayPlayer } from './player.js'
 import {
   filterVoices,
   listVoicesText,
@@ -96,6 +99,13 @@ const BILINGUAL_SCHEMA = z.union(['both', 'english_only', 'chinese_only'] as con
 const SCHEMA: z<VoiceTtsSettings> = z.object({
   delivery: z.union(['off', 'file', 'host_play', 'stream'] as const).default('off'),
   provider: z.string().default('volcengine'),
+  storage: z.object({
+    scope: z.union(['user', 'project'] as const).default('user'),
+    dir: z.string().default(''),
+  }),
+  player: z.object({
+    command: z.string().default(''),
+  }),
   providers: z.object({
     volcengine: z.object({
       apiKeyRef: z.string().default(DEFAULT_VOLCENGINE_API_KEY_REF),
@@ -140,6 +150,8 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
 const DEFAULT_SETTINGS: VoiceTtsSettings = {
   delivery: 'off',
   provider: 'volcengine',
+  storage: { scope: 'user', dir: '' },
+  player: { command: '' },
   providers: {
     volcengine: {
       apiKeyRef: DEFAULT_VOLCENGINE_API_KEY_REF,
@@ -343,37 +355,46 @@ function concatRunChunks(parts: readonly Uint8Array[]): Uint8Array {
   return out
 }
 
-/** 一次交付的结果:总字节数、落盘路径列表、是否触发本机播放、所用格式。 */
+/** 一次交付的一段音频:落盘路径 + 相对名 + 字节数 + 时长。 */
+interface DeliverySegment {
+  /** 落盘绝对路径。 */
+  readonly path: string
+  /** 相对本 dir 的文件名(如 `turn-3-0.aiff`),供 catalog `file` 字段。 */
+  readonly file: string
+  readonly format: string
+  readonly bytes: number
+  readonly durationMs: number | null
+}
+
+/** 一次交付的结果:总字节数、逐段信息、所用格式。 */
 interface DeliveryOutcome {
   readonly totalBytes: number
-  readonly paths: readonly string[]
-  readonly played: boolean
   readonly format: string
+  readonly segments: readonly DeliverySegment[]
 }
 
 /**
- * 按 delivery 模式交付一次合成:off 拒绝;file 落盘;host_play 落盘 + 本机播放;
- * stream 流式合成落盘(前端消费未来接)。
- * 多 run(不同音色/参数)时逐段独立成文件(单 run 保持原名,多 run 带 `-<i>` 序号),
- * host_play 逐段串行入队播放——绝不把不同音色的容器格式音频字节拼接。
+ * 按 delivery 模式合成一段文本为音频文件并落盘到 `dir`(纯合成 + 落盘,不播)。
+ * 多 run(不同音色/参数)时逐段独立成文件(单 run 不带序号,多 run 带 `-<i>`),
+ * 绝不把不同音色的容器格式音频字节拼接。host_play 的本机播放由调用方经
+ * {@link PlaybackController} 触发。
  * @param tts - TTS 注册表。
  * @param settings - 已解析设置。
- * @param cwd - 落盘目录。
+ * @param dir - 落盘目录(绝对路径,已解析)。
  * @param baseName - 文件名(不含扩展名)。
  * @param text - 待合成文本。
  * @param delivery - 交付模式。
+ * @param voiceId - 当前 dsh-voice id。
  * @returns 交付结果。
  */
 async function deliverSpeech(
   tts: TtsService,
   settings: VoiceTtsSettings,
-  cwd: string,
+  dir: string,
   baseName: string,
   text: string,
   delivery: VoiceTtsSettings['delivery'],
   voiceId: string | undefined,
-  playerQueue: PlayerQueue,
-  warn: (line: string) => void = () => {},
 ): Promise<DeliveryOutcome> {
   const view = deliveryView(settings)
   if (delivery === 'off') {
@@ -384,27 +405,43 @@ async function deliverSpeech(
     ? await streamRuns(tts, settings, text, format, voiceId)
     : await synthesizeRuns(tts, settings, text, format, voiceId)
 
-  const paths: string[] = []
+  mkdirSync(dir, { recursive: true })
+  const segments: DeliverySegment[] = []
   let totalBytes = 0
   for (let i = 0; i < audios.length; i++) {
     const suffix = audios.length === 1 ? '' : `-${i}`
-    const path = resolve(cwd, `${baseName}${suffix}.${format}`)
+    const file = `${baseName}${suffix}.${format}`
+    const path = join(dir, file)
     writeFileSync(path, audios[i]!)
-    paths.push(path)
+    segments.push({
+      path,
+      file,
+      format,
+      bytes: audios[i]!.byteLength,
+      durationMs: audioDurationMs(audios[i]!, format),
+    })
     totalBytes += audios[i]!.byteLength
   }
+  return { totalBytes, format, segments }
+}
 
-  let played = false
-  if (delivery === 'host_play') {
-    played = true
-    // 串行播放队列:一次只播一个,避免多会话/多 turn 并发抢占系统播放器。
-    for (const path of paths) {
-      void playerQueue.enqueue({ path, format }).catch(error => {
-        warn(`host_play failed: ${error.message}`)
-      })
-    }
+/** 把一次交付登记进 catalog(先载入根目录 catalog → upsert → 原子写回)。 */
+function recordCatalog(root: string, sessionId: string, turn: number, outcome: DeliveryOutcome, provider: string, delivery: string): void {
+  const catalog = loadCatalog(root)
+  const entry = {
+    sessionId,
+    turn,
+    files: outcome.segments.map(segment => ({
+      file: `${sessionId}/${segment.file}`,
+      format: segment.format,
+      bytes: segment.bytes,
+      durationMs: segment.durationMs,
+    })),
+    createdAt: Date.now(),
+    provider,
+    delivery,
   }
-  return { totalBytes, paths, played, format }
+  saveCatalog(root, upsert(catalog, entry))
 }
 
 /**
@@ -412,6 +449,9 @@ async function deliverSpeech(
  * @param tts - TTS 注册表。
  * @param scope - 已注册的 voice-tts 设置作用域。
  * @param invocation - 命令调用(含 rawInput、agent、signal)。
+ * @param resolveVoiceId - 软读当前 dsh-voice id。
+ * @param playback - 单一播放权威(`speak` 的 host_play 经它)。
+ * @param storageRoot - 解析当前会话的音频写根目录。
  * @returns 归一化的命令结果。
  */
 async function executeTtsCommand(
@@ -419,7 +459,8 @@ async function executeTtsCommand(
   scope: SettingsScope<VoiceTtsSettings>,
   invocation: CommandInvocation,
   resolveVoiceId: (sessionId?: string, cwd?: string) => string | undefined,
-  playerQueue: PlayerQueue,
+  playback: PlaybackController,
+  storageRoot: (cwd: string | undefined) => string,
 ): Promise<CommandResult> {
   const command = parseTtsCommand(invocation.rawInput)
 
@@ -461,9 +502,13 @@ async function executeTtsCommand(
       const delivery = command.delivery ?? settings.delivery
       try {
         const cwd = invocation.agent.session.header.cwd ?? process.cwd()
-        const outcome = await deliverSpeech(tts, settings, cwd, 'dsh-voice-tts-output', command.text, delivery, resolveVoiceId(invocation.agent.id, invocation.agent.session.header.cwd), playerQueue)
-        const played = outcome.played ? ' (played)' : ''
-        return { kind: 'success', text: `synthesized ${outcome.totalBytes} bytes (${outcome.format})${played} -> ${outcome.paths.join(', ')}` }
+        const dir = storageRoot(cwd)
+        const outcome = await deliverSpeech(tts, settings, dir, 'dsh-voice-tts-output', command.text, delivery, resolveVoiceId(invocation.agent.id, invocation.agent.session.header.cwd))
+        if (delivery === 'host_play') {
+          playback.hostPlay('speak', 0, outcome.segments.map(s => ({ path: s.path, format: s.format })), outcome.segments.map(s => s.durationMs))
+        }
+        const played = delivery === 'host_play' ? ' (playing)' : ''
+        return { kind: 'success', text: `synthesized ${outcome.totalBytes} bytes (${outcome.format})${played} -> ${outcome.segments.map(s => s.path).join(', ')}` }
       } catch (error) {
         return { kind: 'error', text: `synthesis failed: ${describeError(error)}` }
       }
@@ -663,58 +708,69 @@ export function apply(ctx: Context): void {
   ctx.effect(() => tts.registerProvider(new SiliconflowTtsProvider(() => resolveApiKey('siliconflow-cn'))), 'siliconflow-cn provider')
   ctx.effect(() => tts.registerProvider(new HostTtsProvider()), 'host provider')
 
-  // 串行播放队列:所有 host_play 经它排队,一次只播一个。
-  const playerQueue = new PlayerQueue()
+  // 单一播放权威:host_play 与浏览器 <audio> 的统一状态机(设计 §4)。后端工厂按
+  // settings.player.command 探测 ffplay → afplay(可暂停/可 seek 的 ffplay 优先)。
+  const playback = new PlaybackController(() => {
+    const command = detectPlayerCommand(activeSettings.player.command)
+    return command.includes('ffplay') ? new FfplayPlayer(command) : new AfplayPlayer(command)
+  })
 
-  // 内存音频注册表:`sessionId:turn` → 逐 run 落盘路径 + 格式。turn/end 交付成功后登记,
-  // 供 `/voice-tts/audio-status|audio` 定位浏览器回放文件;进程重启后清空(见设计文档)。
-  interface TurnAudioEntry {
-    readonly paths: readonly string[]
-    readonly format: string
+  // 音频写根(优先 storage.dir → scope → 用户默认)。
+  const storageRoot = (cwd: string | undefined): string =>
+    storageRootFor(cwd, resolveStorageConfig(activeSettings.storage))
+
+  // 由 sessionId 解析写根(拿 live session 的 cwd;非 live 回退用户默认)。
+  const rootForSession = (sessionId: string): string => {
+    const sessions = ctx.get('sessions')
+    const session = sessions?.get(SessionId(sessionId))
+    return storageRoot(session?.header.cwd)
   }
-  const audioByTurn = new Map<string, TurnAudioEntry>()
-  const audioKey = (sessionId: string, turn: number): string => `${sessionId}:${turn}`
 
+  // 某 turn 缓存音频状态(catalog 优先,缺失回退磁盘扫描 session 子目录)。
   const audioStatus = (sessionId: string, turn: number): TurnAudioStatus => {
-    const entry = audioByTurn.get(audioKey(sessionId, turn))
-    return entry === undefined
-      ? { exists: false, segments: 0, format: null }
-      : { exists: true, segments: entry.paths.length, format: entry.format }
+    const segments = resolveTurnSegments(rootForSession(sessionId), sessionId, turn)
+    if (segments.length === 0) return { exists: false, segments: 0, format: null }
+    return { exists: true, segments: segments.length, format: segments[0]!.format }
   }
 
+  // 某 turn 某段音频的落盘路径与格式。
   const audioFile = (sessionId: string, turn: number, index: number): { path: string; format: string } | undefined => {
-    const entry = audioByTurn.get(audioKey(sessionId, turn))
-    if (entry === undefined || index < 0 || index >= entry.paths.length) return undefined
-    return { path: entry.paths[index]!, format: entry.format }
+    const segment = resolveTurnSegments(rootForSession(sessionId), sessionId, turn)[index]
+    return segment === undefined ? undefined : { path: segment.path, format: segment.format }
   }
 
-  // 重新生成某 turn 的最终回复语音:从 live session 日志提取文本 → 复用 deliverSpeech →
-  // 登记注册表。delivery=off 时强制 file(用户显式点了「重新生成」,必须产出可播放文件)。
+  // 交付一个 turn 的最终回复(合成 → 落盘存储根 → catalog 登记 → host_play 触发播放)。
+  const deliverTurn = async (
+    sessionId: string,
+    turn: number,
+    cwd: string | undefined,
+    text: string,
+    delivery: VoiceTtsSettings['delivery'],
+    voiceId: string | undefined,
+  ): Promise<DeliveryOutcome> => {
+    const root = storageRoot(cwd)
+    const dir = sessionDir(root, sessionId)
+    const outcome = await deliverSpeech(tts, activeSettings, dir, turnBaseName(turn), text, delivery, voiceId)
+    recordCatalog(root, sessionId, turn, outcome, activeSettings.provider, delivery)
+    if (delivery === 'host_play') {
+      playback.hostPlay(sessionId, turn, outcome.segments.map(s => ({ path: s.path, format: s.format })), outcome.segments.map(s => s.durationMs))
+    }
+    return outcome
+  }
+
+  // 重新生成某 turn 语音(从 live session 日志提取文本,复用 deliverTurn)。
   const regenerateTurn = async (sessionId: string, turn: number): Promise<TurnAudioStatus> => {
-    ctx.logger.info('dsh-voice-tts: regenerate turn=%d session=%s', turn, sessionId)
-    // `ctx.get('sessions')` 是 strict 全局 store 读;`ctx.sessions` property 代理是
-    // topology-sensitive 的(需在 inject 里声明),见 packages/CLAUDE.md optional-services 约定。
     const sessions = ctx.get('sessions')
     if (sessions === undefined) throw new Error('sessions service is not available')
     const session = sessions.get(SessionId(sessionId))
-    if (session === undefined) {
-      const live = sessions.list().map(s => String(s.id)).join(', ')
-      ctx.logger.warn('dsh-voice-tts: regenerate failed — session %s not live (live: %s)', sessionId, live || '<none>')
-      throw new Error(`session ${sessionId} is not live`)
-    }
+    if (session === undefined) throw new Error(`session ${sessionId} is not live`)
     const raw = finalAssistantText(session.events as readonly TurnEventLike[], turn)
     if (raw === undefined) throw new Error(`turn ${turn} has no final assistant message`)
     const text = sanitizeForSpeech(raw)
     if (text.length === 0) throw new Error(`turn ${turn} has no speechable text`)
-    const settings = activeSettings
-    const delivery: VoiceTtsSettings['delivery'] = settings.delivery === 'off' ? 'file' : settings.delivery
-    const cwd = session.header.cwd ?? process.cwd()
-    const baseName = `dsh-voice-tts-${sessionId}-turn-${turn}`
-    ctx.logger.info('dsh-voice-tts: regenerate synthesizing (delivery=%s, provider=%s)', delivery, settings.provider)
-    const outcome = await deliverSpeech(tts, settings, cwd, baseName, text, delivery, resolveVoiceId(session.id, session.header.cwd), playerQueue, line => ctx.logger.warn('dsh-voice-tts: %s', line))
-    audioByTurn.set(audioKey(sessionId, turn), { paths: outcome.paths, format: outcome.format })
-    ctx.logger.info('dsh-voice-tts: regenerate done -> %s', outcome.paths.join(', '))
-    return { exists: true, segments: outcome.paths.length, format: outcome.format }
+    const delivery: VoiceTtsSettings['delivery'] = activeSettings.delivery === 'off' ? 'file' : activeSettings.delivery
+    const outcome = await deliverTurn(sessionId, turn, session.header.cwd, text, delivery, resolveVoiceId(session.id, session.header.cwd))
+    return { exists: true, segments: outcome.segments.length, format: outcome.format }
   }
 
   // turn-final 交付:delivery=off 不处理;否则每轮结束把最终回复按 delivery 交付。
@@ -727,14 +783,12 @@ export function apply(ctx: Context): void {
     // markdown/HTML/代码块先净化为可朗读文本:代码块不读,整段代码/JSON/SQL/YAML 不读。
     const text = sanitizeForSpeech(raw)
     if (text.length === 0) return
-    const cwd = session.header.cwd ?? process.cwd()
-    // 文件名带 session id + turn,避免多会话同 cwd 下同名覆盖、互相抢占。
-    const baseName = `dsh-voice-tts-${String(session.id)}-turn-${event.data.turn}`
-    void deliverSpeech(tts, settings, cwd, baseName, text, settings.delivery, resolveVoiceId(session.id, session.header.cwd), playerQueue, line => ctx.logger.warn('dsh-voice-tts: %s', line))
+    const sessionId = String(session.id)
+    const turn = event.data.turn
+    void deliverTurn(sessionId, turn, session.header.cwd, text, settings.delivery, resolveVoiceId(session.id, session.header.cwd))
       .then(outcome => {
-        audioByTurn.set(audioKey(String(session.id), event.data.turn), { paths: outcome.paths, format: outcome.format })
-        const played = outcome.played ? ' (played)' : ''
-        ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', event.data.turn, outcome.totalBytes, outcome.format, played, outcome.paths.join(', '))
+        const played = settings.delivery === 'host_play' ? ' (playing)' : ''
+        ctx.logger.info('dsh-voice-tts: turn %d delivered %d bytes (%s)%s -> %s', turn, outcome.totalBytes, outcome.format, played, outcome.segments.map(s => s.path).join(', '))
       })
       .catch(error => {
         ctx.logger.warn('dsh-voice-tts: turn-final delivery failed: %s', describeError(error))
@@ -755,7 +809,7 @@ export function apply(ctx: Context): void {
       name: 'dsh-voice-tts',
       description: 'text-to-speech synthesis and config (volcengine seed-tts-2.0)',
       input: { hint: '[status|list-voices|config|speak|ui]' },
-      handler: invocation => executeTtsCommand(tts, scope, invocation, resolveVoiceId, playerQueue),
+      handler: invocation => executeTtsCommand(tts, scope, invocation, resolveVoiceId, playback, storageRoot),
     })
   })
 
@@ -820,13 +874,19 @@ export function apply(ctx: Context): void {
   // Web UI slot 路由(webServer 存在时挂;headless 下静默不挂)。
   ctx.inject(['webServer'], (wctx) => {
     registerSlotRoutes(wctx, {
-      state: () => ({ delivery: activeSettings.delivery, playing: playerQueue.isPlaying() }),
+      state: () => ({ delivery: activeSettings.delivery, playing: playback.isPlaying() }),
       toggle: toggleDelivery,
-      stopPlay: () => { playerQueue.stop() },
+      stopPlay: () => { playback.stop() },
       panelUrl: () => (panelToken !== undefined && panelPort !== undefined ? panelUrl(panelPort, panelToken) : null),
       audioStatus,
       audioFile,
       regenerate: regenerateTurn,
+      playback: () => playback.snapshot(),
+      playbackPause: () => { playback.pause() },
+      playbackResume: () => { playback.resume() },
+      playbackSeek: (ms: number) => { playback.seek(ms) },
+      playbackClaim: (sessionId: string, turn: number) => { playback.claimUi(sessionId, turn) },
+      playbackRelease: () => { playback.releaseUi() },
     })
   })
 }

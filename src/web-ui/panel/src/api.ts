@@ -92,6 +92,8 @@ export interface HostConfig extends BilingualFields {
 export interface Settings {
   delivery: 'off' | 'file' | 'host_play' | 'stream'
   provider: string
+  storage: { scope: 'user' | 'project'; dir: string }
+  player: { command: string }
   providers: {
     volcengine: VolcengineConfig
     'siliconflow-cn': SiliconflowConfig

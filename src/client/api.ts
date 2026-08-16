@@ -82,3 +82,51 @@ export function regenerate(sessionId: string, turn: number): Promise<TurnAudioSt
 export function audioUrl(sessionId: string, turn: number, index: number): string {
   return `/voice-tts/audio?sessionId=${encodeURIComponent(sessionId)}&turn=${encodeURIComponent(String(turn))}&index=${encodeURIComponent(String(index))}`
 }
+
+/** 播放状态快照（镜像 host 侧 `PlaybackState`）。 */
+export interface PlaybackState {
+  active: boolean
+  mode: 'host' | 'ui' | null
+  sessionId: string | null
+  turn: number | null
+  segmentIndex: number | null
+  segmentCount: number | null
+  status: 'playing' | 'paused' | null
+  positionMs: number
+  durationMs: number | null
+}
+
+/** 读当前播放状态。 */
+export function getPlayback(): Promise<PlaybackState> {
+  return routeFetch<PlaybackState>('/voice-tts/playback', {})
+}
+
+/** 停止 host 播放。 */
+export function stopPlayback(): Promise<PlaybackState> {
+  return routeFetch<PlaybackState>('/voice-tts/playback/stop', {})
+}
+
+/** 暂停 host 播放。 */
+export function pausePlayback(): Promise<PlaybackState> {
+  return routeFetch<PlaybackState>('/voice-tts/playback/pause', {})
+}
+
+/** 恢复 host 播放。 */
+export function resumePlayback(): Promise<PlaybackState> {
+  return routeFetch<PlaybackState>('/voice-tts/playback/resume', {})
+}
+
+/** 定位 host 播放。 */
+export function seekPlayback(ms: number): Promise<PlaybackState> {
+  return routeFetch<PlaybackState>('/voice-tts/playback/seek', { ms })
+}
+
+/** 浏览器 `<audio>` 宣称开始播某 turn。 */
+export function claimPlayback(sessionId: string, turn: number): Promise<PlaybackState> {
+  return routeFetch<PlaybackState>('/voice-tts/playback/claim', { sessionId, turn })
+}
+
+/** 浏览器 `<audio>` 释放。 */
+export function releasePlayback(): Promise<PlaybackState> {
+  return routeFetch<PlaybackState>('/voice-tts/playback/release', {})
+}

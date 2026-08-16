@@ -628,6 +628,8 @@ export function App(): JSX.Element {
     const toSave: Settings = {
       delivery: region === 'global' ? config.delivery : saved.delivery,
       provider: region === 'global' ? config.provider : saved.provider,
+      storage: region === 'global' ? config.storage : saved.storage,
+      player: region === 'global' ? config.player : saved.player,
       providers: {
         volcengine: region === 'volcengine' ? config.providers.volcengine : saved.providers.volcengine,
         'siliconflow-cn': region === 'siliconflow-cn' ? config.providers['siliconflow-cn'] : saved.providers['siliconflow-cn'],
@@ -640,6 +642,8 @@ export function App(): JSX.Element {
       setConfig(prev => prev === null ? v.config : {
         delivery: region === 'global' ? v.config.delivery : prev.delivery,
         provider: region === 'global' ? v.config.provider : prev.provider,
+        storage: region === 'global' ? v.config.storage : prev.storage,
+        player: region === 'global' ? v.config.player : prev.player,
         providers: {
           volcengine: region === 'volcengine' ? v.config.providers.volcengine : prev.providers.volcengine,
           'siliconflow-cn': region === 'siliconflow-cn' ? v.config.providers['siliconflow-cn'] : prev.providers['siliconflow-cn'],
@@ -661,8 +665,8 @@ export function App(): JSX.Element {
   }
 
   const globalDirty = countDiff(
-    { delivery: config.delivery, provider: config.provider },
-    { delivery: saved.delivery, provider: saved.provider },
+    { delivery: config.delivery, provider: config.provider, storage: config.storage, player: config.player },
+    { delivery: saved.delivery, provider: saved.provider, storage: saved.storage, player: saved.player },
   )
   const volDirty = countDiff(config.providers.volcengine, saved.providers.volcengine)
   const sfDirty = countDiff(config.providers['siliconflow-cn'], saved.providers['siliconflow-cn'])
@@ -690,6 +694,25 @@ export function App(): JSX.Element {
               <select value={config.provider} onChange={e => setConfig(prev => prev === null ? prev : { ...prev, provider: e.target.value })}>
                 {PROVIDERS.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              <span className="field-head"><span className="mono key">storage.scope</span><span className="desc">音频落盘层级（user 用户默认 / project 仓库本地）</span></span>
+              <select value={config.storage.scope} onChange={e => setConfig(prev => prev === null ? prev : { ...prev, storage: { ...prev.storage, scope: e.target.value as 'user' | 'project' } })}>
+                <option value="user">user</option>
+                <option value="project">project</option>
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-head"><span className="mono key">storage.dir</span><span className="desc">自定义绝对路径（空 = 按 scope 解析）</span></span>
+              <input value={config.storage.dir} onChange={e => setConfig(prev => prev === null ? prev : { ...prev, storage: { ...prev.storage, dir: e.target.value } })} />
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              <span className="field-head"><span className="mono key">player.command</span><span className="desc">本机播放器命令路径（空 = 自动探测 ffplay → afplay）</span></span>
+              <input value={config.player.command} onChange={e => setConfig(prev => prev === null ? prev : { ...prev, player: { command: e.target.value } })} />
             </label>
           </div>
           <SaveBar dirty={globalDirty} onSave={() => void saveRegion('global')} />

@@ -132,6 +132,23 @@ export type VoiceTtsProfiles = Record<string, VoiceTtsVoices>
 /** turn-final 的音频交付方式。 */
 export type DeliveryMode = 'off' | 'file' | 'host_play' | 'stream'
 
+/** 音频落盘层级:`user` 用户级(默认)/ `project` 仓库级。 */
+export type StorageScope = 'user' | 'project'
+
+/** 音频落盘配置(见 docs/audio-storage-and-playback.md §3)。 */
+export interface StorageConfig {
+  /** 无 `dir` 时选层级:默认用户级;project 时写 `<repo>/.dsh/voice-tts`(非仓库回退用户)。 */
+  scope: StorageScope
+  /** 会话自定义绝对路径;非空时优先级最高。 */
+  dir: string
+}
+
+/** 本机播放器配置(见 docs/audio-storage-and-playback.md §4.2)。 */
+export interface PlayerConfig {
+  /** 播放器命令路径;空 = 自动探测 ffplay → afplay。 */
+  command: string
+}
+
 /**
  * 双语播报 + 音色映射的共享配置(provider 无关)。各 provider 的 config 都继承它,
  * 双语规划(`bilingual.ts`)只依赖这一份,不感知 provider 差异。
@@ -208,6 +225,10 @@ export interface VoiceTtsSettings {
   delivery: DeliveryMode
   /** 当前选中的 provider id。 */
   provider: string
+  /** 音频落盘目录配置(见 docs/audio-storage-and-playback.md §3)。 */
+  storage: StorageConfig
+  /** 本机播放器配置(见 docs/audio-storage-and-playback.md §4.2)。 */
+  player: PlayerConfig
   /** 各 provider 的设置(键 = provider id,与注册的 provider 一一对应)。 */
   providers: {
     volcengine: VolcengineProviderSettings

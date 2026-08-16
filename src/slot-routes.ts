@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { DeliveryMode } from './types.js'
+import type { PlaybackState } from './playback.js'
 
 /** 某 turn 缓存音频的查询结果（audio-status / regenerate 共用）。 */
 export interface TurnAudioStatus {
@@ -40,6 +41,18 @@ export interface SlotRoutesDeps {
   audioFile(sessionId: string, turn: number, index: number): { path: string; format: string } | undefined
   /** 重新生成某 turn 的最终回复语音,返回新状态。 */
   regenerate(sessionId: string, turn: number): Promise<TurnAudioStatus>
+  /** 当前播放状态(单一播放权威快照)。 */
+  playback(): PlaybackState
+  /** 暂停 host 播放。 */
+  playbackPause(): void
+  /** 恢复 host 播放。 */
+  playbackResume(): void
+  /** 定位 host 播放。 */
+  playbackSeek(ms: number): void
+  /** 浏览器 `<audio>` 宣称开始播某 turn。 */
+  playbackClaim(sessionId: string, turn: number): void
+  /** 浏览器 `<audio>` 释放。 */
+  playbackRelease(): void
 }
 
 /** 请求体字节上限。 */
@@ -213,14 +226,26 @@ export function registerSlotRoutes(ctx: Context, deps: SlotRoutesDeps): void {
         res.end()
         return
       }
-      const size = statSync(file.path).size
+      let size: number
+      try {
+        size = statSync(file.path).size
+      } catch {
+        // 音频文件被用户移动/删除(目标里的「抗用户手动改配置」):按不存在处理,不崩。
+        res.writeHead(404)
+        res.end()
+        return
+      }
       res.writeHead(200, {
         'content-type': audioContentType(file.format),
         'content-length': size,
         'accept-ranges': 'bytes',
         'cache-control': 'no-cache',
       })
-      createReadStream(file.path).pipe(res)
+      const stream = createReadStream(file.path)
+      stream.on('error', () => {
+        res.destroy()
+      })
+      stream.pipe(res)
     },
   }), 'dsh-voice-tts: /voice-tts/audio')
 
@@ -234,4 +259,91 @@ export function registerSlotRoutes(ctx: Context, deps: SlotRoutesDeps): void {
       })
     },
   }), 'dsh-voice-tts: /voice-tts/regenerate')
+
+  // 播放状态与控制的单一权威(页面刷新后据此恢复显示、停止/暂停 host_play)。
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/playback',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        await readJsonBody(req)
+        return deps.playback()
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/playback')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/playback/stop',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        await readJsonBody(req)
+        deps.stopPlay()
+        return deps.playback()
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/playback/stop')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/playback/pause',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        await readJsonBody(req)
+        deps.playbackPause()
+        return deps.playback()
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/playback/pause')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/playback/resume',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        await readJsonBody(req)
+        deps.playbackResume()
+        return deps.playback()
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/playback/resume')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/playback/seek',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        const body = await readJsonBody(req)
+        const ms = typeof body === 'object' && body !== null && typeof (body as Record<string, unknown>).ms === 'number'
+          ? (body as Record<string, unknown>).ms as number
+          : 0
+        deps.playbackSeek(ms)
+        return deps.playback()
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/playback/seek')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/playback/claim',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        const { sessionId, turn } = sessionTurnOf(await readJsonBody(req))
+        deps.playbackClaim(sessionId, turn)
+        return deps.playback()
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/playback/claim')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/playback/release',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        await readJsonBody(req)
+        deps.playbackRelease()
+        return deps.playback()
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/playback/release')
 }

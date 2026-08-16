@@ -1,46 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
-import { PlayerQueue, playFileToCompletion, resolvePlayer } from '../src/player.js'
+import { AfplayPlayer, detectPlayerCommand, FfplayPlayer } from '../src/player.js'
+import type { AudioPlayer, PlayableFile } from '../src/player.js'
 
-describe('resolvePlayer', () => {
-  it('maps darwin to afplay', () => {
-    const player = resolvePlayer('darwin')
-    expect(player?.bin).toBe('afplay')
-    expect(player?.args('/tmp/a.wav')).toEqual(['/tmp/a.wav'])
-  })
-
-  it('maps linux to aplay', () => {
-    const player = resolvePlayer('linux')
-    expect(player?.bin).toBe('aplay')
-    expect(player?.args('/tmp/a.wav')).toEqual(['/tmp/a.wav'])
-  })
-
-  it('maps win32 to powershell SoundPlayer', () => {
-    const player = resolvePlayer('win32')
-    expect(player?.bin).toBe('powershell')
-    expect(player?.args('/tmp/a.wav').join(' ')).toContain("Media.SoundPlayer '/tmp/a.wav'")
-  })
-
-  it('returns undefined for unknown platforms', () => {
-    expect(resolvePlayer('freebsd')).toBeUndefined()
-  })
-})
-
-/** 可手动触发 exit/error 的假子进程（每事件支持多监听器，模拟 Node 的 on/once 并存）。 */
+/** 可手动触发 exit/error 的假子进程。 */
 class FakeChild {
   stderr = { on: vi.fn() }
   kill = vi.fn()
-  private handlers: Record<string, Array<(arg?: unknown) => void>> = {}
+  private handlers: Record<string, Array<(...args: unknown[]) => void>> = {}
 
-  on(event: string, cb: (arg?: unknown) => void): void {
+  on(event: string, cb: (...args: unknown[]) => void): void {
     (this.handlers[event] ??= []).push(cb)
   }
 
-  once(event: string, cb: (arg?: unknown) => void): void {
-    (this.handlers[event] ??= []).push(cb)
-  }
-
-  exit(code: number): void {
-    for (const cb of this.handlers['exit'] ?? []) cb(code)
+  exit(code: number, signal: string | null): void {
+    for (const cb of this.handlers['exit'] ?? []) cb(code, signal)
   }
 
   fail(err: Error): void {
@@ -60,96 +33,109 @@ function fakeSpawn(): { calls: Array<{ bin: string; args: string[] }>; children:
   return { calls, children, spawnImpl }
 }
 
-const flush = async (): Promise<void> => {
-  await Promise.resolve()
-  await Promise.resolve()
-}
+const FILE: PlayableFile = { path: '/a.aiff', format: 'aiff' }
 
-describe('playFileToCompletion', () => {
-  it('resolves on clean exit', async () => {
-    const { children, spawnImpl } = fakeSpawn()
-    const p = playFileToCompletion({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
-    children[0]!.exit(0)
-    await expect(p).resolves.toBeUndefined()
-  })
-
-  it('rejects on non-zero exit', async () => {
-    const { children, spawnImpl } = fakeSpawn()
-    const p = playFileToCompletion({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
-    children[0]!.exit(1)
-    await expect(p).rejects.toThrow(/code=1/)
+describe('detectPlayerCommand', () => {
+  it('uses explicit command verbatim', () => {
+    expect(detectPlayerCommand('/custom/ffplay')).toBe('/custom/ffplay')
   })
 })
 
-describe('PlayerQueue', () => {
-  it('serializes playback in FIFO order (no overlap)', async () => {
+describe('FfplayPlayer', () => {
+  it('spawns with -nodisp/-autoexit and -ss only when startMs>0', () => {
+    const { calls, spawnImpl } = fakeSpawn()
+    const p = new FfplayPlayer('/ffplay', () => 0, spawnImpl)
+    p.start(FILE, 0)
+    expect(calls[0]!.args).toEqual(['-nodisp', '-autoexit', '-loglevel', 'quiet', '/a.aiff'])
+
+    p.start(FILE, 1500)
+    expect(calls[1]!.args).toEqual(['-nodisp', '-autoexit', '-loglevel', 'quiet', '-ss', '1.5', '/a.aiff'])
+  })
+
+  it('pause records position and kills; resume restarts with -ss', () => {
+    let t = 0
     const { calls, children, spawnImpl } = fakeSpawn()
-    const q = new PlayerQueue()
-    const p1 = q.enqueue({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
-    const p2 = q.enqueue({ path: '/b.wav', format: 'wav' }, 'darwin', spawnImpl)
-    await flush()
-    expect(calls.length).toBe(1)
-    expect(calls[0]!.args[0]).toBe('/a.wav')
-
-    children[0]!.exit(0)
-    await flush()
-    expect(calls.length).toBe(2)
-    expect(calls[1]!.args[0]).toBe('/b.wav')
-
-    children[1]!.exit(0)
-    await expect(p1).resolves.toBeUndefined()
-    await expect(p2).resolves.toBeUndefined()
-  })
-
-  it('keeps the queue alive after a failed item', async () => {
-    const { calls, children, spawnImpl } = fakeSpawn()
-    const q = new PlayerQueue()
-    const p1 = q.enqueue({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
-    const p2 = q.enqueue({ path: '/b.wav', format: 'wav' }, 'darwin', spawnImpl)
-    await flush()
-    children[0]!.exit(1) // 第一条失败
-    await flush()
-    expect(calls.length).toBe(2) // 第二条仍被调度
-    children[1]!.exit(0)
-    await expect(p1).rejects.toThrow()
-    await expect(p2).resolves.toBeUndefined()
-  })
-
-  it('reports isPlaying while a file is playing', async () => {
-    const { children, spawnImpl } = fakeSpawn()
-    const q = new PlayerQueue()
-    expect(q.isPlaying()).toBe(false)
-    void q.enqueue({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
-    await flush()
-    expect(q.isPlaying()).toBe(true)
-    children[0]!.exit(0)
-    await flush()
-    expect(q.isPlaying()).toBe(false)
-  })
-
-  it('stop kills the current child and reports not playing', async () => {
-    const { children, spawnImpl } = fakeSpawn()
-    const q = new PlayerQueue()
-    void q.enqueue({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
-    await flush()
-    expect(q.isPlaying()).toBe(true)
-    q.stop()
+    const p = new FfplayPlayer('/ffplay', () => t, spawnImpl)
+    p.start(FILE, 0)
+    t = 1000
+    p.pause()
+    expect(p.position()).toBe(1000)
+    expect(p.running()).toBe(false)
     expect(children[0]!.kill).toHaveBeenCalled()
-    expect(q.isPlaying()).toBe(false)
+
+    p.resume()
+    expect(calls[1]!.args).toContain('-ss')
+    expect(calls[1]!.args.at(-2)).toBe('1')
+    expect(p.running()).toBe(true)
   })
 
-  it('stop invalidates queued-but-not-started items', async () => {
-    const { calls, children, spawnImpl } = fakeSpawn()
-    const q = new PlayerQueue()
-    void q.enqueue({ path: '/a.wav', format: 'wav' }, 'darwin', spawnImpl)
-    void q.enqueue({ path: '/b.wav', format: 'wav' }, 'darwin', spawnImpl)
-    await flush()
-    expect(calls.length).toBe(1)
-    q.stop()
-    await flush()
-    // 第二条已入队但被 stop 作废，不再 spawn。
-    expect(calls.length).toBe(1)
-    children[0]!.exit(0)
-    await flush()
+  it('seek restarts at the given position while playing', () => {
+    const { calls, spawnImpl } = fakeSpawn()
+    const p = new FfplayPlayer('/ffplay', () => 0, spawnImpl)
+    p.start(FILE, 0)
+    p.seek(500)
+    expect(p.position()).toBe(500)
+    expect(calls[1]!.args).toContain('-ss')
+    expect(calls[1]!.args.at(-2)).toBe('0.5')
+  })
+
+  it('stop kills and resets position', () => {
+    const { children, spawnImpl } = fakeSpawn()
+    const p = new FfplayPlayer('/ffplay', () => 0, spawnImpl)
+    p.start(FILE, 0)
+    p.stop()
+    expect(children[0]!.kill).toHaveBeenCalled()
+    expect(p.running()).toBe(false)
+    expect(p.position()).toBe(0)
+  })
+
+  it('fires onEnded on clean exit', () => {
+    const { children, spawnImpl } = fakeSpawn()
+    const p = new FfplayPlayer('/ffplay', () => 0, spawnImpl)
+    const ended = vi.fn()
+    p.onEnded = ended
+    p.start(FILE, 0)
+    children[0]!.exit(0, null)
+    expect(ended).toHaveBeenCalled()
+  })
+
+  it('fires onError on spawn error', () => {
+    const { children, spawnImpl } = fakeSpawn()
+    const p = new FfplayPlayer('/ffplay', () => 0, spawnImpl)
+    const err = vi.fn()
+    p.onError = err
+    p.start(FILE, 0)
+    children[0]!.fail(new Error('ENOENT'))
+    expect(err).toHaveBeenCalled()
+  })
+})
+
+describe('AfplayPlayer', () => {
+  it('spawns afplay with the path and no seek args', () => {
+    const { calls, spawnImpl } = fakeSpawn()
+    const p = new AfplayPlayer('/usr/bin/afplay', () => 0, spawnImpl)
+    p.start(FILE, 0)
+    expect(calls[0]).toEqual({ bin: '/usr/bin/afplay', args: ['/a.aiff'] })
+  })
+
+  it('pause/resume/seek throw unsupported', () => {
+    const { spawnImpl } = fakeSpawn()
+    const p: AudioPlayer = new AfplayPlayer('/usr/bin/afplay', () => 0, spawnImpl)
+    p.start(FILE, 0)
+    expect(() => { p.pause() }).toThrow(/pause\/seek/)
+    expect(() => { p.resume() }).toThrow(/pause\/seek/)
+    expect(() => { p.seek(10) }).toThrow(/pause\/seek/)
+  })
+
+  it('position is wall-clock since start; stop resets', () => {
+    let t = 0
+    const { children, spawnImpl } = fakeSpawn()
+    const p = new AfplayPlayer('/usr/bin/afplay', () => t, spawnImpl)
+    p.start(FILE, 0)
+    t = 2500
+    expect(p.position()).toBe(2500)
+    p.stop()
+    expect(children[0]!.kill).toHaveBeenCalled()
+    expect(p.position()).toBe(0)
   })
 })
