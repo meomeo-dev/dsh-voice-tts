@@ -4,16 +4,17 @@
  * @module dsh-voice-tts/command
  */
 
-import type { BilingualVoiceConfig, DeliveryMode, TtsVoice, VoiceTtsSettings } from './types.js'
+import type { BilingualVoiceConfig, DeliveryMode, HostConfig, TtsVoice, VoiceTtsSettings } from './types.js'
 import type { ApiKeyRefSettings } from './types.js'
 import { DEFAULT_VOICE_TYPE, VOLCENGINE_CONFIG_TEMPLATE } from './volcengine.js'
 import { SILICONFLOW_CONFIG_TEMPLATE } from './siliconflow.js'
+import { HOST_CONFIG_TEMPLATE } from './host.js'
 
 /** 命令用法回显文案。 */
 export const USAGE = [
   'Usage: /dsh-voice-tts [status|help]',
   '  status                            # 当前 provider / delivery / 各 provider 配置概览',
-  '  use <provider>                    # 切换当前 provider(如 volcengine / siliconflow-cn)',
+  '  use <provider>                    # 切换当前 provider(如 volcengine / siliconflow-cn / host)',
   '  list-voices [provider] [query]    # 列出可用音色(可按 voice_type/名称/场景/语种过滤)',
   '  config --template [provider]      # 输出某 provider 的完整配置模板(JSON)',
   '  config --json <json>              # 用 JSON 覆盖「当前 provider」的配置(部分字段即可)',
@@ -127,6 +128,7 @@ export function listVoicesText(voices: readonly TtsVoice[], provider: string): s
 /** 按 provider id 渲染 `config --template` JSON 模板。 */
 export function renderConfigTemplate(providerId: string): string {
   if (providerId === 'siliconflow-cn') return JSON.stringify(SILICONFLOW_CONFIG_TEMPLATE, null, 2)
+  if (providerId === 'host') return JSON.stringify(HOST_CONFIG_TEMPLATE, null, 2)
   return JSON.stringify(VOLCENGINE_CONFIG_TEMPLATE, null, 2)
 }
 
@@ -149,8 +151,15 @@ export function renderStatus(settings: VoiceTtsSettings, providerIds: readonly s
     const en = c.voices.en?.voice_type || c.voice_type
     const mixed = c.voices.mixed?.voice_type || c.voices.zh?.voice_type || c.voice_type
     lines.push(`${id} config:`)
-    lines.push(`  apiKeyRef:  ${c.apiKeyRef}`)
-    lines.push(`  voice_type: ${c.voice_type}`)
+    if (id === 'host') {
+      const h = cfg as HostConfig
+      lines.push(`  command:    ${h.command}`)
+      lines.push(`  voice_type: ${h.voice_type || '(system default)'}`)
+      lines.push(`  rate:       ${h.rate}`)
+    } else {
+      lines.push(`  apiKeyRef:  ${c.apiKeyRef}`)
+      lines.push(`  voice_type: ${c.voice_type}`)
+    }
     lines.push(`  bilingual:  ${c.bilingual}`)
     lines.push(`  voices:     zh=${zh}  en=${en}  mixed=${mixed}`)
   }

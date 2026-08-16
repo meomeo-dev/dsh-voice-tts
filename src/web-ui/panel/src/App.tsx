@@ -7,13 +7,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { readBootstrap, rpc } from './api'
 import type {
-  Bootstrap, KeyStatus, Settings, Status, SiliconflowConfig, TunableParam, Voice, Voices, VoiceSlot, VolcengineConfig,
+  Bootstrap, HostConfig, KeyStatus, Settings, Status, SiliconflowConfig, TunableParam, Voice, Voices, VoiceSlot, VolcengineConfig,
 } from './api'
 
 const DELIVERY_OPTIONS = ['off', 'file', 'host_play', 'stream'] as const
 const BILINGUAL_OPTIONS = ['both', 'english_only', 'chinese_only'] as const
 const LANG_KEYS = ['zh', 'en', 'mixed'] as const
-const PROVIDERS = ['volcengine', 'siliconflow-cn'] as const
+const PROVIDERS = ['volcengine', 'siliconflow-cn', 'host'] as const
 
 /** 音色 `group` → 下拉分组名。 */
 const GROUP_LABEL: Record<string, string> = { standard: '标准', multilingual: '多语种' }
@@ -568,15 +568,39 @@ function SiliconflowCard(props: { bootstrap: Bootstrap; cfg: SiliconflowConfig; 
   )
 }
 
+/** host provider 卡片。 */
+function HostCard(props: { cfg: HostConfig; voices: readonly Voice[]; dirty: number; onChange: (next: HostConfig) => void; onSave: () => void }): JSX.Element {
+  const { cfg } = props
+  const set = (patch: Partial<HostConfig>): void => props.onChange({ ...cfg, ...patch })
+  return (
+    <div className="card provider-card">
+      <div className="section-title">host (本地 say · macOS)</div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-head"><span className="mono key">command</span><span className="desc">本地 TTS 命令绝对路径</span></span>
+          <input type="text" value={cfg.command} onChange={e => set({ command: e.target.value })} placeholder="/usr/bin/say" />
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">rate</span><span className="desc">语速 wpm (-r)</span></span>
+          <input type="number" min={1} max={600} value={cfg.rate} onChange={e => set({ rate: Number(e.target.value) || 175 })} />
+        </label>
+      </div>
+      <BilingualFields cfg={cfg} voices={props.voices} params={[]} inherited={{}} onChange={patch => set(patch)} />
+      <ProfilesEditor profiles={cfg.voice_profiles} voices={props.voices} params={[]} inherited={{}} onChange={next => set({ voice_profiles: next })} />
+      <SaveBar dirty={props.dirty} onSave={props.onSave} />
+    </div>
+  )
+}
+
 /** 根组件:bootstrap → 加载数据 → 渲染多 provider 配置表单。 */
 export function App(): JSX.Element {
   const [bootstrap] = useState(readBootstrap)
   const [config, setConfig] = useState<Settings | null>(null)
   const [saved, setSaved] = useState<Settings | null>(null)
   const [status, setStatus] = useState<Status | null>(null)
-  const [voices, setVoices] = useState<Record<string, Voice[]>>({ volcengine: [], 'siliconflow-cn': [] })
-  const [models, setModels] = useState<Record<string, string[]>>({ volcengine: [], 'siliconflow-cn': [] })
-  const [params, setParams] = useState<Record<string, TunableParam[]>>({ volcengine: [], 'siliconflow-cn': [] })
+  const [voices, setVoices] = useState<Record<string, Voice[]>>({ volcengine: [], 'siliconflow-cn': [], host: [] })
+  const [models, setModels] = useState<Record<string, string[]>>({ volcengine: [], 'siliconflow-cn': [], host: [] })
+  const [params, setParams] = useState<Record<string, TunableParam[]>>({ volcengine: [], 'siliconflow-cn': [], host: [] })
   const [error, setError] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
 
@@ -587,18 +611,19 @@ export function App(): JSX.Element {
       rpc<{ status: Status }>(bootstrap, 'status-get'),
       rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'volcengine' }),
       rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'siliconflow-cn' }),
-    ]).then(([c, s, v1, v2]) => {
+      rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'host' }),
+    ]).then(([c, s, v1, v2, v3]) => {
       setConfig(c.config)
       setSaved(c.config)
       setStatus(s.status)
-      setVoices({ volcengine: v1.voices, 'siliconflow-cn': v2.voices })
-      setModels({ volcengine: v1.models, 'siliconflow-cn': v2.models })
-      setParams({ volcengine: v1.params, 'siliconflow-cn': v2.params })
+      setVoices({ volcengine: v1.voices, 'siliconflow-cn': v2.voices, host: v3.voices })
+      setModels({ volcengine: v1.models, 'siliconflow-cn': v2.models, host: v3.models })
+      setParams({ volcengine: v1.params, 'siliconflow-cn': v2.params, host: v3.params })
     }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false))
   }, [bootstrap])
 
-  const saveRegion = useCallback(async (region: 'global' | 'volcengine' | 'siliconflow-cn'): Promise<void> => {
+  const saveRegion = useCallback(async (region: 'global' | 'volcengine' | 'siliconflow-cn' | 'host'): Promise<void> => {
     if (bootstrap === undefined || config === null || saved === null) return
     const toSave: Settings = {
       delivery: region === 'global' ? config.delivery : saved.delivery,
@@ -606,6 +631,7 @@ export function App(): JSX.Element {
       providers: {
         volcengine: region === 'volcengine' ? config.providers.volcengine : saved.providers.volcengine,
         'siliconflow-cn': region === 'siliconflow-cn' ? config.providers['siliconflow-cn'] : saved.providers['siliconflow-cn'],
+        host: region === 'host' ? config.providers.host : saved.providers.host,
       },
     }
     try {
@@ -617,6 +643,7 @@ export function App(): JSX.Element {
         providers: {
           volcengine: region === 'volcengine' ? v.config.providers.volcengine : prev.providers.volcengine,
           'siliconflow-cn': region === 'siliconflow-cn' ? v.config.providers['siliconflow-cn'] : prev.providers['siliconflow-cn'],
+          host: region === 'host' ? v.config.providers.host : prev.providers.host,
         },
       })
       rpc<{ status: Status }>(bootstrap, 'status-get').then(s => setStatus(s.status)).catch(() => {})
@@ -639,6 +666,7 @@ export function App(): JSX.Element {
   )
   const volDirty = countDiff(config.providers.volcengine, saved.providers.volcengine)
   const sfDirty = countDiff(config.providers['siliconflow-cn'], saved.providers['siliconflow-cn'])
+  const hostDirty = countDiff(config.providers.host, saved.providers.host)
 
   return (
     <div className="shell">
@@ -672,6 +700,9 @@ export function App(): JSX.Element {
         <SiliconflowCard bootstrap={bootstrap} cfg={config.providers['siliconflow-cn']} voices={voices['siliconflow-cn']} models={models['siliconflow-cn']} params={params['siliconflow-cn']} dirty={sfDirty}
           onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, 'siliconflow-cn': next } })}
           onSave={() => void saveRegion('siliconflow-cn')} />
+        <HostCard cfg={config.providers.host} voices={voices.host} dirty={hostDirty}
+          onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, host: next } })}
+          onSave={() => void saveRegion('host')} />
         <datalist id="voice-tts-key-names">
           {KNOWN_KEY_NAMES.map(name => <option key={name} value={name} />)}
         </datalist>

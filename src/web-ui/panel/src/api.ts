@@ -82,6 +82,12 @@ export interface SiliconflowConfig extends BilingualFields {
   gain: number
 }
 
+/** host provider 配置(镜像 host 侧 HostConfig)。 */
+export interface HostConfig extends BilingualFields {
+  command: string
+  rate: number
+}
+
 /** voice-tts 设置(镜像 host 侧 VoiceTtsSettings)。 */
 export interface Settings {
   delivery: 'off' | 'file' | 'host_play' | 'stream'
@@ -89,6 +95,7 @@ export interface Settings {
   providers: {
     volcengine: VolcengineConfig
     'siliconflow-cn': SiliconflowConfig
+    host: HostConfig
   }
 }
 

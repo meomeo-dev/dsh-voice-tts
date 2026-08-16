@@ -20,8 +20,10 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { TtsService } from './service.js'
 import { VolcengineTtsProvider } from './provider-volcengine.js'
 import { SiliconflowTtsProvider } from './provider-siliconflow.js'
+import { HostTtsProvider } from './provider-host.js'
 import { DEFAULT_VOICE_TYPE, DEFAULT_VOLCENGINE_API_KEY_REF, VOLCENGINE_RESOURCE_IDS, VOLCENGINE_TUNABLE_PARAMS } from './volcengine.js'
 import { DEFAULT_SILICONFLOW_API_KEY_REF, DEFAULT_SILICONFLOW_MODEL, DEFAULT_SILICONFLOW_VOICE, SILICONFLOW_MODELS, SILICONFLOW_TUNABLE_PARAMS } from './siliconflow.js'
+import { DEFAULT_HOST_COMMAND, DEFAULT_HOST_RATE, HOST_OUTPUT_FORMAT } from './host.js'
 import type { BilingualVoiceConfig, TunableParam, VoiceSlot, VoiceTtsSettings } from './types.js'
 import { concatAudio, planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
@@ -123,6 +125,14 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       voices: voicesSchema(SILICONFLOW_TUNABLE_PARAMS),
       voice_profiles: voiceProfilesSchema(SILICONFLOW_TUNABLE_PARAMS),
     }),
+    host: z.object({
+      command: z.string().default(DEFAULT_HOST_COMMAND),
+      voice_type: z.string().default(''),
+      rate: z.number().step(1).min(1).max(600).default(DEFAULT_HOST_RATE),
+      bilingual: BILINGUAL_SCHEMA,
+      voices: voicesSchema([]),
+      voice_profiles: voiceProfilesSchema([]),
+    }),
   }),
 })
 
@@ -155,6 +165,14 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       sample_rate: 32000,
       speed: 1,
       gain: 0,
+      bilingual: 'both',
+      voices: {},
+      voice_profiles: {},
+    },
+    host: {
+      command: DEFAULT_HOST_COMMAND,
+      voice_type: '',
+      rate: DEFAULT_HOST_RATE,
       bilingual: 'both',
       voices: {},
       voice_profiles: {},
@@ -212,6 +230,10 @@ function deliveryView(settings: VoiceTtsSettings): DeliveryView {
     const s = settings.providers['siliconflow-cn']
     return { bilingual: s.bilingual, voice_type: s.voice_type, voices: s.voices, voice_profiles: s.voice_profiles, format: s.format, play_format: s.play_format }
   }
+  if (provider === 'host') {
+    const h = settings.providers.host
+    return { bilingual: h.bilingual, voice_type: h.voice_type, voices: h.voices, voice_profiles: h.voice_profiles, format: HOST_OUTPUT_FORMAT, play_format: HOST_OUTPUT_FORMAT }
+  }
   throw new Error(`unknown TTS provider "${provider}"`)
 }
 
@@ -231,6 +253,9 @@ function synthConfig(settings: VoiceTtsSettings, voice: string, format: string, 
   }
   if (provider === 'siliconflow-cn') {
     return { ...settings.providers['siliconflow-cn'], voice_type: voice, format, ...params }
+  }
+  if (provider === 'host') {
+    return { ...settings.providers.host, voice_type: voice, format, ...params }
   }
   throw new Error(`unknown TTS provider "${provider}"`)
 }
@@ -584,6 +609,7 @@ export function apply(ctx: Context): void {
   const apiKeyRefOf = (providerId: string): string => {
     if (providerId === 'volcengine') return activeSettings.providers.volcengine.apiKeyRef
     if (providerId === 'siliconflow-cn') return activeSettings.providers['siliconflow-cn'].apiKeyRef
+    if (providerId === 'host') throw new Error('the host provider has no API key (local command-line synthesis)')
     throw new Error(`unknown TTS provider "${providerId}"`)
   }
 
@@ -605,6 +631,7 @@ export function apply(ctx: Context): void {
   // Providers —— 每个 provider 一个实现,key 按各自 apiKeyRef 解析。
   ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider(() => resolveApiKey('volcengine'))), 'volcengine provider')
   ctx.effect(() => tts.registerProvider(new SiliconflowTtsProvider(() => resolveApiKey('siliconflow-cn'))), 'siliconflow-cn provider')
+  ctx.effect(() => tts.registerProvider(new HostTtsProvider()), 'host provider')
 
   // 串行播放队列:所有 host_play 经它排队,一次只播一个。
   const playerQueue = new PlayerQueue()

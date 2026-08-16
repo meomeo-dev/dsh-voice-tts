@@ -194,6 +194,14 @@ export type VolcengineProviderSettings = VolcengineConfig & ApiKeyRefSettings
 /** 一个 siliconflow provider 的完整设置(config + 凭证引用)。 */
 export type SiliconflowProviderSettings = SiliconflowConfig & ApiKeyRefSettings
 
+/** host provider 的已解析配置(本地命令行 TTS,无凭证)。 */
+export interface HostConfig extends BilingualVoiceConfig {
+  /** 本地 TTS 命令绝对路径,如 `/usr/bin/say`。 */
+  command: string
+  /** 语速(words per minute,`say` 的 `-r`)。 */
+  rate: number
+}
+
 /** `voice-tts` 设置命名空间的已解析切片(多 provider)。 */
 export interface VoiceTtsSettings {
   /** turn-final 交付方式:off 不处理 / file 落盘 / host_play 本机播放 / stream 流式。 */
@@ -204,5 +212,6 @@ export interface VoiceTtsSettings {
   providers: {
     volcengine: VolcengineProviderSettings
     'siliconflow-cn': SiliconflowProviderSettings
+    host: HostConfig
   }
 }
