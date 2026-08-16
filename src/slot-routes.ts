@@ -49,6 +49,8 @@ export interface SlotRoutesDeps {
   playbackResume(): void
   /** 定位 host 播放。 */
   playbackSeek(ms: number): void
+  /** 从缓存重播某 turn(host 播放)。 */
+  playbackPlay(sessionId: string, turn: number): void
   /** 浏览器 `<audio>` 宣称开始播某 turn。 */
   playbackClaim(sessionId: string, turn: number): void
   /** 浏览器 `<audio>` 释放。 */
@@ -322,6 +324,18 @@ export function registerSlotRoutes(ctx: Context, deps: SlotRoutesDeps): void {
       })
     },
   }), 'dsh-voice-tts: /voice-tts/playback/seek')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/voice-tts/playback/play',
+    handler: async (req, res) => {
+      await serve(res, async () => {
+        const { sessionId, turn } = sessionTurnOf(await readJsonBody(req))
+        deps.playbackPlay(sessionId, turn)
+        return deps.playback()
+      })
+    },
+  }), 'dsh-voice-tts: /voice-tts/playback/play')
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',

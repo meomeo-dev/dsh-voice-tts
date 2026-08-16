@@ -14,9 +14,10 @@ import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { NS } from './locales.ts'
 import {
-  audioStatus, audioUrl, claimPlayback, getPlayback, pausePlayback, regenerate,
-  releasePlayback, resumePlayback, stopPlayback,
+  audioStatus, audioUrl, claimPlayback, getPlayback, getState, pausePlayback, playPlayback,
+  regenerate, releasePlayback, resumePlayback, stopPlayback,
 } from './api.ts'
+import type { PlaybackState } from './api.ts'
 import css from './TurnTailPlayer.module.css'
 
 /** turn-tail 播放控制器的完整 props（owner + session kit + chain matched + locale）。 */
@@ -61,6 +62,8 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
   const [uiStatus, setUiStatus] = useState<UiStatus>('idle')
   // host_play 在本 turn 的状态。
   const [host, setHost] = useState<HostState | null>(null)
+  // 当前 delivery(决定「play」走 host 重播还是浏览器 `<audio>`)。
+  const [delivery, setDelivery] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -93,6 +96,11 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
       clearInterval(timer)
     }
   }, [turnNum])
+
+  // 读当前 delivery,决定「play」的分派(host_play → host 重播;否则浏览器 <audio>)。
+  useEffect(() => {
+    getState().then(s => setDelivery(s.delivery)).catch(() => {})
+  }, [])
 
   // 卸载时释放浏览器播放 claim（host 播放不归本组件持有，无需释放）。
   useEffect(() => () => {
@@ -130,14 +138,20 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
     playSegment(segs, 0)
   }
 
-  const startUi = async (): Promise<void> => {
+  const startPlayback = async (): Promise<void> => {
     if (busy) return
     setBusy(true)
     setError(null)
     try {
       const status = await audioStatus(sid, turnNum)
-      if (status.exists) startFromStatus(status.segments)
-      else setModalOpen(true)
+      if (!status.exists) { setModalOpen(true); return }
+      // host_play 交付(或 host 的 AIFF/PCM 等浏览器不可播格式)→ 走 host 重播
+      // (ffplay 可播一切);否则浏览器 `<audio>`(全精度暂停/seek)。
+      if (delivery === 'host_play' || status.format === 'aiff' || status.format === 'pcm') {
+        setHostFrom(await playPlayback(sid, turnNum))
+      } else {
+        startFromStatus(status.segments)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -151,8 +165,12 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
     setError(null)
     try {
       const status = await regenerate(sid, turnNum)
-      if (status.exists) startFromStatus(status.segments)
-      else setError(t('player.regenerate.failed'))
+      if (!status.exists) { setError(t('player.regenerate.failed')); return }
+      if (delivery === 'host_play' || status.format === 'aiff' || status.format === 'pcm') {
+        setHostFrom(await playPlayback(sid, turnNum))
+      } else {
+        startFromStatus(status.segments)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -173,12 +191,12 @@ export function TurnTailPlayer({ turn, sessionId, t }: TurnTailPlayerProps) {
       void audioRef.current?.play()
       setUiStatus('playing')
     } else {
-      void startUi()
+      void startPlayback()
     }
   }
 
-  const setHostFrom = (p: { status: string | null; positionMs: number; durationMs: number | null; segmentIndex: number | null; segmentCount: number | null }): void => {
-    if (p.status === 'playing' || p.status === 'paused') {
+  const setHostFrom = (p: PlaybackState): void => {
+    if (p.mode === 'host' && (p.status === 'playing' || p.status === 'paused')) {
       setHost({ status: p.status, positionMs: p.positionMs, durationMs: p.durationMs, segmentIndex: p.segmentIndex, segmentCount: p.segmentCount })
     } else {
       setHost(null)

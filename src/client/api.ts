@@ -106,6 +106,11 @@ export function stopPlayback(): Promise<PlaybackState> {
   return routeFetch<PlaybackState>('/voice-tts/playback/stop', {})
 }
 
+/** 从缓存重播某 turn(host 播放,ffplay;播放 AIFF/PCM 等浏览器不可播格式)。 */
+export function playPlayback(sessionId: string, turn: number): Promise<PlaybackState> {
+  return routeFetch<PlaybackState>('/voice-tts/playback/play', { sessionId, turn })
+}
+
 /** 暂停 host 播放。 */
 export function pausePlayback(): Promise<PlaybackState> {
   return routeFetch<PlaybackState>('/voice-tts/playback/pause', {})

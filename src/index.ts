@@ -885,6 +885,12 @@ export function apply(ctx: Context): void {
       playbackPause: () => { playback.pause() },
       playbackResume: () => { playback.resume() },
       playbackSeek: (ms: number) => { playback.seek(ms) },
+      playbackPlay: (sessionId: string, turn: number) => {
+        const root = rootForSession(sessionId)
+        const segments = resolveTurnSegments(root, sessionId, turn)
+        if (segments.length === 0) throw new Error(`turn ${turn} has no cached audio`)
+        playback.hostPlay(sessionId, turn, segments.map(s => ({ path: s.path, format: s.format })), segments.map(s => s.durationMs))
+      },
       playbackClaim: (sessionId: string, turn: number) => { playback.claimUi(sessionId, turn) },
       playbackRelease: () => { playback.releaseUi() },
     })
