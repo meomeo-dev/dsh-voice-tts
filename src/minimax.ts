@@ -129,10 +129,11 @@ export function buildMinimaxRequest(
   if (config.emotion.length > 0) voiceSetting.emotion = config.emotion
   const audioSetting: Record<string, unknown> = {
     sample_rate: config.sample_rate,
-    bitrate: config.bitrate,
     format: config.format,
     channel: config.channel,
   }
+  // `bitrate` 仅 mp3 生效;非 mp3 发送会 400 或被忽略,故只对 mp3 附带。
+  if (config.format === 'mp3') audioSetting.bitrate = config.bitrate
   const body = JSON.stringify({
     model: config.model,
     text,
@@ -167,11 +168,12 @@ function decodeAudio(data: unknown): Uint8Array {
   if (typeof data !== 'string' || data.length === 0) {
     throw new Error('minimax TTS returned no audio data')
   }
-  try {
-    return Uint8Array.from(Buffer.from(data, 'hex'))
-  } catch {
-    throw new Error('minimax TTS returned malformed audio (hex decode failed)')
+  // Buffer.from(str, 'hex') 对非法 hex 不抛错而是静默截断,故先显式校验,
+  // 让「非法音频」当场 fail loud(不静默产出残缺音频)。
+  if (data.length % 2 !== 0 || !/^[0-9a-fA-F]+$/u.test(data)) {
+    throw new Error('minimax TTS returned malformed audio (not hex)')
   }
+  return Uint8Array.from(Buffer.from(data, 'hex'))
 }
 
 /**
@@ -198,6 +200,37 @@ export async function synthesizeMinimax(
   const payload = await response.json() as MinimaxPayload
   const audio = decodeAudio(payload.data?.audio)
   return { audio, format: config.format, textWords: 0 }
+}
+
+/**
+ * 从 SSE buffer 提取一个完整帧(空行分隔)。分隔符兼容 `\n\n` 与 `\r\n\r\n`。
+ * 无完整帧时返回 undefined(buffered 里可能还有半帧)。
+ * @param buffer - 累积的原始文本。
+ * @returns 完整帧 + 剩余文本;无完整帧返回 undefined。
+ */
+function extractSseFrame(buffer: string): { frame: string; rest: string } | undefined {
+  const lf = buffer.indexOf('\n\n')
+  const crlf = buffer.indexOf('\r\n\r\n')
+  if (lf < 0 && crlf < 0) return undefined
+  if (lf >= 0 && (crlf < 0 || lf < crlf)) return { frame: buffer.slice(0, lf), rest: buffer.slice(lf + 2) }
+  return { frame: buffer.slice(0, crlf), rest: buffer.slice(crlf + 4) }
+}
+
+/** 解析一个 SSE 帧的 `data:` 行,解码出其中的音频分片。非 JSON 行忽略(注释/心跳)。 */
+function parseSseFrame(frame: string): Uint8Array[] {
+  const parts: Uint8Array[] = []
+  for (const rawLine of frame.split(/\r?\n/u)) {
+    const data = rawLine.startsWith('data:') ? rawLine.slice(5).trim() : ''
+    if (data.length === 0) continue
+    try {
+      const payload = JSON.parse(data) as MinimaxPayload
+      const audio = payload.data?.audio
+      if (typeof audio === 'string' && audio.length > 0) parts.push(decodeAudio(audio))
+    } catch {
+      // 非 JSON 帧(如注释/心跳)忽略;音频帧才是有效载荷。
+    }
+  }
+  return parts
 }
 
 /**
@@ -233,24 +266,14 @@ export async function* streamMinimax(
     const { done, value } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
-    // SSE 帧以空行分隔;每帧形如 `data: {...}` 或 `data:{...}`。
-    let boundary: number
-    while ((boundary = buffer.indexOf('\n\n')) >= 0) {
-      const frame = buffer.slice(0, boundary)
-      buffer = buffer.slice(boundary + 2)
-      for (const line of frame.split('\n')) {
-        const data = line.startsWith('data:') ? line.slice(5).trim() : ''
-        if (data.length === 0) continue
-        try {
-          const payload = JSON.parse(data) as MinimaxPayload
-          const audio = payload.data?.audio
-          if (typeof audio === 'string' && audio.length > 0) {
-            yield { audio: Uint8Array.from(Buffer.from(audio, 'hex')) }
-          }
-        } catch {
-          // 非 JSON 帧(如注释/心跳)忽略;音频帧才是有效载荷。
-        }
-      }
+    for (;;) {
+      const extracted = extractSseFrame(buffer)
+      if (extracted === undefined) break
+      buffer = extracted.rest
+      for (const part of parseSseFrame(extracted.frame)) yield { audio: part }
     }
   }
+  // 冲刷:连接关闭时最后一帧可能不以空行结尾,剩余 buffer 仍要解析(否则丢末帧音频)。
+  buffer += decoder.decode()
+  for (const part of parseSseFrame(buffer)) yield { audio: part }
 }

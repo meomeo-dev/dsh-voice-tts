@@ -15,7 +15,7 @@ import type { ConfigTemplate, OpenaiConfig, TtsChunk, TtsResult, TunableParam } 
 /** OpenAI 兼容的 TTS 路径(相对 vendor baseUrl)。 */
 export const OPENAI_API_PATH = '/audio/speech'
 
-/** 默认 TTS 模型:tts-1(302AI 等 reseller 普遍支持;gpt-4o-mini-tts 可选)。 */
+/** 默认 TTS 模型:tts-1(302AI 等 reseller 普遍支持;gpt-4o-mini-tts 302AI 不支持)。 */
 export const DEFAULT_OPENAI_MODEL = 'tts-1'
 
 /** 默认 vendor id(302AI 的 OpenAI 兼容 endpoint;在 settings.vendors 里定义)。 */
@@ -45,7 +45,7 @@ export const OPENAI_CONFIG_TEMPLATE: ConfigTemplate = {
     },
     model: {
       type: 'string', required: true, default: DEFAULT_OPENAI_MODEL,
-      description: 'TTS 模型 id:tts-1 / tts-1-hd / gpt-4o-mini-tts',
+      description: 'TTS 模型 id:tts-1 / tts-1-hd(gpt-4o-mini-tts 302AI 不支持)',
     },
     voice_type: {
       type: 'string', required: true, default: DEFAULT_OPENAI_VOICE,

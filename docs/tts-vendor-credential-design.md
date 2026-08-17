@@ -72,26 +72,28 @@ vendors: z.record(z.object({
 providers: {
   // …现有 volcengine / siliconflow-cn / host 不变（本轮不迁移，见 §7 非目标）…
   openai: z.object({
-    vendor: z.string().default(''),            // 指向 vendors 里的 id
-    model: z.string().default('gpt-4o-mini-tts'),
-    voice: z.string().default('alloy'),        // 13 个枚举之一
-    instructions: z.string().default(''),      // 自然语言控情绪/语速/口音
-    response_format: z.union(['mp3','opus','aac','flac','wav','pcm']).default('mp3'),
+    vendor: z.string().default('302ai-openai'),  // 指向 vendors 里的 id
+    model: z.string().default('tts-1'),          // tts-1 / tts-1-hd（302AI 不支持 mini-tts）
+    voice_type: z.string().default('alloy'),     // 9 个枚举之一（默认音色走共享 voice_type）
+    instructions: z.string().default(''),        // 自然语言控情绪/语速/口音（仅 mini-tts，留空不发送）
+    format: z.union(['mp3','opus','aac','flac']).default('mp3'),
+    play_format: z.union(['mp3','opus','aac','flac']).default('mp3'),
     speed: z.number().step(0.05).min(0.25).max(4).default(1),
     bilingual: BILINGUAL_SCHEMA,
     voices: voicesSchema(OPENAI_TUNABLE_PARAMS),
     voice_profiles: voiceProfilesSchema(OPENAI_TUNABLE_PARAMS),
   }),
   minimax: z.object({
-    vendor: z.string().default(''),
-    model: z.string().default('MiniMax/speech-02-turbo'),
-    voice_id: z.string().default('male-qn-qingse'),
+    vendor: z.string().default('302ai-minimax'),
+    model: z.string().default('speech-2.8-turbo'),  // speech-2.8-turbo / speech-2.8-hd / speech-2.6-hd
+    voice_type: z.string().default('Chinese (Mandarin)_Reliable_Executive'),
     speed: z.number().step(0.1).min(0.5).max(2).default(1),
-    vol: z.number().step(0.1).default(1),
+    vol: z.number().step(0.1).min(0.1).max(10).default(1),
     pitch: z.number().step(1).min(-12).max(12).default(0),
     emotion: z.string().default(''),
-    sample_rate: z.number().step(1).min(8000).max(44100).default(32000),
+    sample_rate: z.number().step(1).min(8000).max(48000).default(32000),
     format: z.union(['mp3','pcm','flac','wav']).default('mp3'),
+    play_format: z.union(['mp3','pcm','flac','wav']).default('wav'),
     bitrate: z.number().step(1).min(32000).max(256000).default(128000),
     channel: z.union([1,2]).default(1),
     bilingual: BILINGUAL_SCHEMA,
@@ -100,6 +102,10 @@ providers: {
   }),
 }
 ```
+
+> 字段说明：OpenAI/MiniMax 的默认音色统一收敛到共享 `BilingualVoiceConfig.voice_type`（与
+> siliconflow 一致），协议层再把它映射到 API 的 `voice`（OpenAI）/ `voice_id`（MiniMax）。
+> 故 schema 里用 `voice_type`，而非 §3.2 早期草稿的 `voice`/`voice_id`。
 
 ### 3.3 合成时的解析链
 
@@ -116,21 +122,29 @@ settings.provider（协议，如 'openai'）
 
 ## 4. Provider 实现（协议层）
 
-- `OpenaiTtsProvider`：`POST {baseUrl}/v1/audio/speech`，body `{ model, input, voice, instructions, response_format, speed }`；流式走 chunked。`listVoices()` 返回 `src/openai-voices.ts` 的 `OPENAI_GPT_4O_MINI_TTS_VOICES`（13 个固定枚举，`OPENAI_TTS_1_VOICES` 为 tts-1/tts-1-hd 的 9 个子集）。
-- `MinimaxTtsProvider`：`POST {baseUrl}/services/aigc/multimodal-generation/generation`，body `{ model, input:{ text, voice_setting, audio_setting } }`；流式加 `X-DashScope-SSE: enable` 且音频 hex→Buffer。`listVoices()` 返回 `src/minimax-voices.ts` 的 `MINIMAX_SPEECH_02_TURBO_VOICES`（`MINIMAX_SPEECH_02_HD_VOICES` 同源）。
+- `OpenaiTtsProvider`：`POST {baseUrl}/audio/speech`（`baseUrl` 已含 `/v1`），body
+  `{ model, input, voice, response_format, speed }`（`instructions` 留空不发送）；流式走 chunked。
+  `listVoices()` 返回 `src/openai-voices.ts` 的 `OPENAI_TTS_1_VOICES`（9 个，tts-1/tts-1-hd）；
+  `OPENAI_GPT_4O_MINI_TTS_VOICES`（13 个）供未来启用 mini-tts 时切换。
+- `MinimaxTtsProvider`：`POST {baseUrl}/t2a_v2`（302AI 的 DashScope 风格，`baseUrl`
+  `https://api.302.ai/minimaxi/v1`），扁平 body `{ model, text, stream, voice_setting,
+  audio_setting }`；非流式与流式 `data.audio` 均为 **hex**，统一 hex→bytes。`listVoices()`
+  返回 `src/minimax-voices.ts` 的 `MINIMAX_SPEECH_02_TURBO_VOICES`（完整 332 个系统音色；
+  `MINIMAX_SPEECH_02_HD_VOICES` 同源）。
 - 二者 `configTemplate` 暴露 §3.2 的参数与 vendor 字段，`/dsh-voice-tts config --template` 与面板共享同一份 `TunableParam` 元数据。
 
 > 音色常量命名规范：`<PROVIDER>_<MODEL>_VOICES`（如 `OPENAI_GPT_4O_MINI_TTS_VOICES`、
 > `MINIMAX_SPEECH_02_TURBO_VOICES`），文件命名 `<provider>-voices.ts`，与现有
-> `src/voices.ts`（volcengine）/ `src/siliconflow-voices.ts` 同构。MiniMax 完整 327 音色
-> 需官方「音色列表」接口动态查询，源文件只内置已确认的 seed（见 `src/minimax-voices.ts` 头注释）。
+> `src/voices.ts`（volcengine）/ `src/siliconflow-voices.ts` 同构。MiniMax 完整 332 音色
+> 已内置（抓取自官方系统音色列表，见 `src/minimax-voices.ts` 头注释）。
 
 ## 5. 凭据管理
 
 - `apiKeyRef` 仍是 KEY NAME，复用 `/dsh-voice-tts-key set|unset|status`（它按 provider 的
-  apiKeyRef 取 ref）——**需扩展该命令支持「按 vendor 设置/查询」**，因为现在 key 挂在 vendor
-  而非 provider。改法：key 命令增加 vendor 维度，或新增 `/dsh-voice-tts vendor` 子命令。
-- `baseUrl` 是明文，直接写 settings；面板 vendor 区提供 `label/provider/baseUrl/apiKeyRef` 编辑。
+  当前 vendor 取 apiKeyRef）。**当前实现是 provider 维度**：key 命令对「当前选中的 vendor」
+  生效（`apiKeyRefOf` 读 `providers.<id>.vendor` 指向的那条 vendor 的 apiKeyRef）。
+  按「任意 vendor」维度 set/unset/status（不切换当前 vendor）**本轮未做**，见 §7 非目标。
+- `baseUrl` 是明文，直接写 settings；面板 vendor 区提供 `label/provider/baseUrl/apiKeyRef` 编辑（**未做**，见 §7）。
 
 ## 6. 改造面（文件清单）
 
@@ -144,8 +158,8 @@ settings.provider（协议，如 'openai'）
 | `src/provider-openai.ts` / `provider-minimax.ts` | 新增：`TtsProvider` 实现，注入 `resolveEndpoint()` |
 | `src/index.ts` | 注册两个 provider；`resolveEndpoint(vendorId)`；SCHEMA/DEFAULT_SETTINGS 增 vendors + 两 provider |
 | `src/command.ts` | `renderConfigTemplate`/`renderStatus` 支持 openai/minimax + vendor |
-| `src/web-ui/panel/*` | 面板增 vendor 管理 + openai/minimax provider 卡片 |
-| `tests/openai.spec.ts` / `tests/minimax.spec.ts` | 新增：请求构造/响应解析/流式/hex 解码 |
+| `src/web-ui/panel/*` | ~~面板增 vendor 管理 + openai/minimax provider 卡片~~ **未做**（backend RPC seam 已就绪，UI 缺 openai/minimax/vendor 卡片，见 §7） |
+| `tests/openai.spec.ts` / `tests/minimax.spec.ts` | 新增：请求构造/响应解析/流式 SSE 解析/hex 解码/异常 |
 | `docs/tts-vendor-credential-design.md` | 本文 |
 
 ## 7. 非目标（本轮不做）
@@ -153,13 +167,17 @@ settings.provider（协议，如 'openai'）
 - 迁移现有 `volcengine` / `siliconflow-cn` / `host` 到 vendor 模型（它们仍用旧 `apiKeyRef` 单一 key；vendor 模型先服务新增的 openai/minimax）。
 - 音色克隆（ElevenLabs/Fish）、Gemini TTS（多模态语音）——见选型文档，另立需求。
 - 逐 vendor 的配额/用量统计。
+- **Web 面板的 vendor 管理 + openai/minimax provider 卡片**（backend `PanelDeps` 的
+  `listModels`/`listParams` 已支持 openai/minimax，但前端 `App.tsx` 只渲染
+  volcengine/siliconflow-cn/host 三张卡片，无 vendor 编辑 UI）。
+- **按任意 vendor（非当前 vendor）的 key set/unset/status**（key 命令当前是 provider 维度）。
 
 ## 8. 验收标准（AC）
 
 1. `vendors` 可定义多个 vendor，每个含 `label/provider/baseUrl/apiKeyRef`；openai 与 minimax 各能挂多个 vendor。
-2. 切换 `providers.<protocol>.vendor` 即可换源，合成参数（voice/speed/…）不变。
-3. `api_key` 只经 credentials 解析，settings 永不落明文密钥；`/dsh-voice-tts-key`（或 vendor 命令）能按 vendor set/unset/status。
-4. OpenAI 合成走 `POST {baseUrl}/v1/audio/speech`，`gpt-4o-mini-tts` 输出 mp3/opus/aac/flac/wav/pcm 与流式均正确；13 音色可列。
-5. MiniMax 合成走 DashScope 端点，非流式 base64 与流式 hex 均正确还原为音频；`voice_id`/`emotion`/`audio_setting` 生效。
-6. 缺 vendor / vendor 不存在 / 缺 key 时合成当场报可读错误（fail loud），不静默回退、不崩。
-7. `pnpm test` + `pnpm typecheck` + `pnpm build` 全绿；面板可配置 vendor 与两 provider 参数。
+2. 切换 `providers.<protocol>.vendor` 即可换源，合成参数（voice_type/speed/…）不变。
+3. `api_key` 只经 credentials 解析，settings 永不落明文密钥；`/dsh-voice-tts-key` 能对「当前 provider 当前 vendor」set/unset/status（按任意 vendor 维度见 §7 非目标）。
+4. OpenAI 合成走 `POST {baseUrl}/audio/speech`（`baseUrl` 含 `/v1`），`tts-1`/`tts-1-hd` 输出 mp3/opus/aac/flac 与流式均正确；9 音色可列。
+5. MiniMax 合成走 302AI `/t2a_v2`，非流式与流式 `data.audio` 均 hex 正确还原为音频；`voice_id`/`emotion`/`audio_setting` 生效；SSE 流式兼容 LF/CRLF 分隔且不丢末帧。
+6. 缺 vendor / vendor 不存在 / 缺 key / 协议不匹配时合成当场报可读错误（fail loud），不静默回退、不崩。
+7. `pnpm test` + `pnpm typecheck` + `pnpm build` 全绿。（面板 vendor 配置 UI 见 §7 非目标。）

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildMinimaxRequest, MINIMAX_API_PATH, synthesizeMinimax } from '../src/minimax.ts'
-import type { MinimaxConfig } from '../src/types.ts'
+import { buildMinimaxRequest, MINIMAX_API_PATH, streamMinimax, synthesizeMinimax } from '../src/minimax.ts'
+import type { MinimaxConfig, TtsChunk } from '../src/types.ts'
 
 function cfg(over: Partial<MinimaxConfig> = {}): MinimaxConfig {
   return {
@@ -45,6 +45,12 @@ describe('buildMinimaxRequest', () => {
   it('sets stream: true for streaming', () => {
     expect(JSON.parse(buildMinimaxRequest(cfg(), 'k', 'x', true).body).stream).toBe(true)
   })
+
+  it('omits bitrate for non-mp3 formats', () => {
+    const body = JSON.parse(buildMinimaxRequest(cfg({ format: 'wav' }), 'k', 'x').body)
+    expect(body.audio_setting).not.toHaveProperty('bitrate')
+    expect(body.audio_setting.format).toBe('wav')
+  })
 })
 
 describe('synthesizeMinimax', () => {
@@ -67,5 +73,66 @@ describe('synthesizeMinimax', () => {
   it('throws with the error message on non-2xx', async () => {
     const fetchImpl = (async () => new Response(JSON.stringify({ message: 'bad voice' }), { status: 400 })) as typeof fetch
     await expect(synthesizeMinimax(cfg(), 'https://x', 'k', 'hi', fetchImpl)).rejects.toThrow(/bad voice/)
+  })
+
+  it('throws on malformed (non-hex) audio', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ data: { audio: 'zz-not-hex' } }), { status: 200 })) as typeof fetch
+    await expect(synthesizeMinimax(cfg(), 'https://x', 'k', 'hi', fetchImpl)).rejects.toThrow(/not hex/)
+  })
+
+  it('throws on odd-length hex audio', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ data: { audio: 'abc' } }), { status: 200 })) as typeof fetch
+    await expect(synthesizeMinimax(cfg(), 'https://x', 'k', 'hi', fetchImpl)).rejects.toThrow(/not hex/)
+  })
+})
+
+describe('streamMinimax', () => {
+  /** 把若干文本块拼成一个 SSE Response(块间无空行边界)。 */
+  function sseResponse(chunks: readonly string[]): Response {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+        controller.close()
+      },
+    })
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+  }
+
+  async function collect(gen: AsyncIterable<TtsChunk>): Promise<Uint8Array[]> {
+    const out: Uint8Array[] = []
+    for await (const chunk of gen) out.push(chunk.audio)
+    return out
+  }
+
+  it('parses LF-separated frames and decodes hex', async () => {
+    const hex = Buffer.from([1, 2, 3]).toString('hex')
+    const fetchImpl = (async () => sseResponse([`data: {"data":{"audio":"${hex}"}}\n\n`])) as typeof fetch
+    expect(await collect(streamMinimax(cfg(), 'https://x', 'k', 'hi', fetchImpl))).toEqual([Uint8Array.from([1, 2, 3])])
+  })
+
+  it('parses CRLF-separated frames', async () => {
+    const hex = Buffer.from([9, 8, 7]).toString('hex')
+    const fetchImpl = (async () => sseResponse([`data: {"data":{"audio":"${hex}"}}\r\n\r\n`])) as typeof fetch
+    expect(await collect(streamMinimax(cfg(), 'https://x', 'k', 'hi', fetchImpl))).toEqual([Uint8Array.from([9, 8, 7])])
+  })
+
+  it('flushes a final frame without a trailing blank line', async () => {
+    const hex = Buffer.from([4, 5, 6]).toString('hex')
+    const fetchImpl = (async () => sseResponse([`data: {"data":{"audio":"${hex}"}}`])) as typeof fetch
+    expect(await collect(streamMinimax(cfg(), 'https://x', 'k', 'hi', fetchImpl))).toEqual([Uint8Array.from([4, 5, 6])])
+  })
+
+  it('yields multiple frames across chunks', async () => {
+    const a = Buffer.from([1]).toString('hex')
+    const b = Buffer.from([2]).toString('hex')
+    const fetchImpl = (async () => sseResponse([`data: {"data":{"audio":"${a}"}}\n\n`, `data: {"data":{"audio":"${b}"}}\n\n`])) as typeof fetch
+    expect(await collect(streamMinimax(cfg(), 'https://x', 'k', 'hi', fetchImpl))).toEqual([Uint8Array.from([1]), Uint8Array.from([2])])
+  })
+
+  it('ignores non-JSON (comment/heartbeat) frames', async () => {
+    const hex = Buffer.from([7]).toString('hex')
+    const fetchImpl = (async () => sseResponse([`: keep-alive\n\ndata: {"data":{"audio":"${hex}"}}\n\n`])) as typeof fetch
+    expect(await collect(streamMinimax(cfg(), 'https://x', 'k', 'hi', fetchImpl))).toEqual([Uint8Array.from([7])])
   })
 })

@@ -3,6 +3,11 @@
 > 状态：调研记录（实现前参考）。为 dsh-voice-tts 引入「便宜语音合成」而做的候选对比，
 > 覆盖 5 家 provider，供按「价格 / 中文音质 / 情感表达 / 多语种」四维选型。
 > 计费单位不统一（字符 / token / 字节），下表统一折算到「每 1M 字符」与「约每分钟语音」两个口径。
+>
+> ⚠️ **落地偏离**：本表对比时用的 OpenAI `gpt-4o-mini-tts` / MiniMax `speech-02-turbo` 是
+> 对比口径，**实际接入**（经 302AI 中转）落地为 OpenAI `tts-1`/`tts-1-hd` + MiniMax
+> `speech-2.8-turbo`（302AI 不支持 mini-tts）。端点到参数的落地细节见
+> `docs/tts-openai-minimax-integration.md`；本表仍保留原始候选口径作为选型依据。
 
 ## 0. 口径说明
 
