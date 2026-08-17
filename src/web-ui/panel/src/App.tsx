@@ -7,13 +7,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { readBootstrap, rpc } from './api'
 import type {
-  Bootstrap, HostConfig, KeyStatus, Settings, Status, SiliconflowConfig, TunableParam, Voice, Voices, VoiceSlot, VolcengineConfig,
+  Bootstrap, HostConfig, KeyStatus, MinimaxConfig, OpenaiConfig, Settings, SiliconflowConfig, Status, TunableParam, VendorRecord, Voice, Voices, VoiceSlot, VolcengineConfig,
 } from './api'
 
 const DELIVERY_OPTIONS = ['off', 'file', 'host_play', 'stream'] as const
 const BILINGUAL_OPTIONS = ['both', 'english_only', 'chinese_only'] as const
 const LANG_KEYS = ['zh', 'en', 'mixed'] as const
-const PROVIDERS = ['volcengine', 'siliconflow-cn', 'host'] as const
+const PROVIDERS = ['volcengine', 'siliconflow-cn', 'host', 'openai', 'minimax'] as const
+/** vendor 允许归属的协议。 */
+const VENDOR_PROVIDERS = ['openai', 'minimax'] as const
+
+/** 面板可独立保存的区域(与 config 顶层字段/ provider 键一一对应)。 */
+type Region = 'global' | 'vendors' | 'volcengine' | 'siliconflow-cn' | 'host' | 'openai' | 'minimax'
 
 /** 音色 `group` → 下拉分组名。 */
 const GROUP_LABEL: Record<string, string> = { standard: '标准', multilingual: '多语种' }
@@ -34,7 +39,7 @@ const RESOURCE_LABEL: Record<string, string> = {
 }
 
 /** 已知凭证引用名(KEY NAME)下拉候选。 */
-const KNOWN_KEY_NAMES = ['VOLCENGINE_TTS_API_KEY', 'SILICONFLOW_API_KEY', 'DEEPSEEK_API_KEY'] as const
+const KNOWN_KEY_NAMES = ['VOLCENGINE_TTS_API_KEY', 'SILICONFLOW_API_KEY', 'TTS_302AI_API_KEY', 'DEEPSEEK_API_KEY'] as const
 
 /** voice_profiles 的一行(React 编辑态)。 */
 interface ProfileRow {
@@ -84,6 +89,36 @@ function rowsToProfiles(rows: readonly ProfileRow[]): Record<string, Voices> {
     }
   }
   return out
+}
+
+/** vendor 注册表的一行(React 编辑态;id 是 vendors 的 key)。 */
+interface VendorRow {
+  id: string
+  label: string
+  provider: 'openai' | 'minimax'
+  baseUrl: string
+  apiKeyRef: string
+}
+
+function vendorsToRows(vendors: Record<string, VendorRecord>): VendorRow[] {
+  return Object.entries(vendors).map(([id, v]) => ({ id, label: v.label, provider: v.provider, baseUrl: v.baseUrl, apiKeyRef: v.apiKeyRef }))
+}
+
+function rowsToVendors(rows: readonly VendorRow[]): Record<string, VendorRecord> {
+  const out: Record<string, VendorRecord> = {}
+  for (const row of rows) {
+    const id = row.id.trim()
+    if (id.length === 0) continue
+    out[id] = { label: row.label, provider: row.provider, baseUrl: row.baseUrl, apiKeyRef: row.apiKeyRef }
+  }
+  return out
+}
+
+/** 某协议的 vendor id 列表(供 openai/minimax 卡片的 vendor 下拉)。 */
+function vendorIdsOf(vendors: Record<string, VendorRecord>, provider: 'openai' | 'minimax'): string[] {
+  return Object.entries(vendors)
+    .filter(([, v]) => v.provider === provider)
+    .map(([id]) => id)
 }
 
 /**
@@ -592,15 +627,241 @@ function HostCard(props: { cfg: HostConfig; voices: readonly Voice[]; dirty: num
   )
 }
 
+/** vendor 注册表卡片:label / provider / baseUrl / apiKeyRef 的增删改。 */
+function VendorsCard(props: {
+  vendors: Record<string, VendorRecord>
+  dirty: number
+  onChange: (next: Record<string, VendorRecord>) => void
+  onSave: () => void
+}): JSX.Element {
+  const [rows, setRows] = useState<VendorRow[]>(() => vendorsToRows(props.vendors))
+  const update = (next: VendorRow[]): void => {
+    setRows(next)
+    props.onChange(rowsToVendors(next))
+  }
+  const set = (index: number, patch: Partial<VendorRow>): void =>
+    update(rows.map((r, i) => i === index ? { ...r, ...patch } : r))
+  return (
+    <div className="card provider-card">
+      <div className="section-title">vendors (endpoint 源)</div>
+      <div className="meta">一个协议可挂多个 vendor(不同折扣的 baseUrl + apiKeyRef);openai/minimax 卡片从此选源。</div>
+      {rows.map((row, index) => (
+        <div className="vendor-row" key={index}>
+          <div className="vendor-grid">
+            <label className="field">
+              <span className="field-head"><span className="mono key">id</span><span className="desc">唯一标识(providers 里引用)</span></span>
+              <input type="text" value={row.id} placeholder="302ai-openai" onChange={e => set(index, { id: e.target.value })} />
+            </label>
+            <label className="field">
+              <span className="field-head"><span className="mono key">label</span><span className="desc">展示名</span></span>
+              <input type="text" value={row.label} onChange={e => set(index, { label: e.target.value })} />
+            </label>
+            <label className="field">
+              <span className="field-head"><span className="mono key">provider</span><span className="desc">所属协议</span></span>
+              <select value={row.provider} onChange={e => set(index, { provider: e.target.value as 'openai' | 'minimax' })}>
+                {VENDOR_PROVIDERS.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="vendor-grid">
+            <label className="field">
+              <span className="field-head"><span className="mono key">baseUrl</span><span className="desc">endpoint 前缀(明文,openai 需含 /v1)</span></span>
+              <input type="text" value={row.baseUrl} placeholder="https://api.302.ai/v1" onChange={e => set(index, { baseUrl: e.target.value })} />
+            </label>
+            <label className="field">
+              <span className="field-head"><span className="mono key">apiKeyRef</span><span className="desc">KEY NAME(密钥引用名)</span></span>
+              <input type="text" list="voice-tts-key-names" value={row.apiKeyRef} placeholder="TTS_302AI_API_KEY" onChange={e => set(index, { apiKeyRef: e.target.value })} />
+            </label>
+            <button type="button" className="refresh danger vendor-del" onClick={() => update(rows.filter((_, i) => i !== index))}>删除</button>
+          </div>
+        </div>
+      ))}
+      <button type="button" className="refresh" onClick={() => update([...rows, { id: '', label: '', provider: 'openai', baseUrl: '', apiKeyRef: '' }])}>+ 添加 vendor</button>
+      <SaveBar dirty={props.dirty} onSave={props.onSave} />
+    </div>
+  )
+}
+
+/** OpenAI provider 卡片:vendor 选择 + 选中 vendor 的 key 管理 + 合成参数。 */
+function OpenaiCard(props: {
+  bootstrap: Bootstrap
+  cfg: OpenaiConfig
+  vendors: Record<string, VendorRecord>
+  voices: readonly Voice[]
+  models: readonly string[]
+  params: readonly TunableParam[]
+  dirty: number
+  onChange: (next: OpenaiConfig) => void
+  onSave: () => void
+}): JSX.Element {
+  const { cfg, vendors } = props
+  const set = (patch: Partial<OpenaiConfig>): void => props.onChange({ ...cfg, ...patch })
+  const vendorIds = vendorIdsOf(vendors, 'openai')
+  const selected = vendors[cfg.vendor]
+  return (
+    <div className="card provider-card">
+      <div className="section-title">openai (tts-1 / tts-1-hd)</div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-head"><span className="mono key">vendor</span><span className="desc">endpoint 源(在 Vendors 区管理)</span></span>
+          <select value={cfg.vendor} onChange={e => set({ vendor: e.target.value })}>
+            {vendorIds.length === 0 && <option value="">(no openai vendor)</option>}
+            {vendorIds.map(id => <option key={id} value={id}>{vendors[id]!.label || id} — {id}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">baseUrl</span><span className="desc">来自选中 vendor(只读)</span></span>
+          <input type="text" value={selected?.baseUrl ?? ''} disabled placeholder="(no vendor)" />
+        </label>
+      </div>
+      {selected !== undefined
+        ? <CredentialSection bootstrap={props.bootstrap} keyRef={selected.apiKeyRef} />
+        : <div className="banner error">vendor "{cfg.vendor}" 不存在;到 Vendors 区添加或改选。</div>}
+      <BilingualFields cfg={cfg} voices={props.voices} params={props.params} inherited={inheritedParams(cfg, props.params)} onChange={patch => set(patch)} />
+      <div className="field-row">
+        <label className="field">
+          <span className="field-head"><span className="mono key">model</span><span className="desc">TTS 模型</span></span>
+          <select value={cfg.model} onChange={e => set({ model: e.target.value })}>
+            {props.models.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">instructions</span><span className="desc">情绪/语速/口音(仅 mini-tts;tts-1 忽略)</span></span>
+          <input type="text" value={cfg.instructions} onChange={e => set({ instructions: e.target.value })} placeholder="(empty)" />
+        </label>
+      </div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-head"><span className="mono key">format</span><span className="desc">file/stream 落盘格式</span></span>
+          <select value={cfg.format} onChange={e => set({ format: e.target.value as OpenaiConfig['format'] })}>
+            {['mp3', 'opus', 'aac', 'flac'].map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">play_format</span><span className="desc">host_play 播放格式</span></span>
+          <select value={cfg.play_format} onChange={e => set({ play_format: e.target.value as OpenaiConfig['play_format'] })}>
+            {['mp3', 'opus', 'aac', 'flac'].map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">speed</span><span className="desc">[0.25,4.0] 语速</span></span>
+          <input type="number" min={0.25} max={4} step={0.05} value={cfg.speed} onChange={e => set({ speed: Number(e.target.value) || 1 })} />
+        </label>
+      </div>
+      <ProfilesEditor profiles={cfg.voice_profiles} voices={props.voices} params={props.params} inherited={inheritedParams(cfg, props.params)} onChange={next => set({ voice_profiles: next })} />
+      <SaveBar dirty={props.dirty} onSave={props.onSave} />
+    </div>
+  )
+}
+
+/** MiniMax provider 卡片:vendor 选择 + 选中 vendor 的 key 管理 + 合成参数。 */
+function MinimaxCard(props: {
+  bootstrap: Bootstrap
+  cfg: MinimaxConfig
+  vendors: Record<string, VendorRecord>
+  voices: readonly Voice[]
+  models: readonly string[]
+  params: readonly TunableParam[]
+  dirty: number
+  onChange: (next: MinimaxConfig) => void
+  onSave: () => void
+}): JSX.Element {
+  const { cfg, vendors } = props
+  const set = (patch: Partial<MinimaxConfig>): void => props.onChange({ ...cfg, ...patch })
+  const vendorIds = vendorIdsOf(vendors, 'minimax')
+  const selected = vendors[cfg.vendor]
+  return (
+    <div className="card provider-card">
+      <div className="section-title">minimax (speech-2.8-turbo)</div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-head"><span className="mono key">vendor</span><span className="desc">endpoint 源(在 Vendors 区管理)</span></span>
+          <select value={cfg.vendor} onChange={e => set({ vendor: e.target.value })}>
+            {vendorIds.length === 0 && <option value="">(no minimax vendor)</option>}
+            {vendorIds.map(id => <option key={id} value={id}>{vendors[id]!.label || id} — {id}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">baseUrl</span><span className="desc">来自选中 vendor(只读)</span></span>
+          <input type="text" value={selected?.baseUrl ?? ''} disabled placeholder="(no vendor)" />
+        </label>
+      </div>
+      {selected !== undefined
+        ? <CredentialSection bootstrap={props.bootstrap} keyRef={selected.apiKeyRef} />
+        : <div className="banner error">vendor "{cfg.vendor}" 不存在;到 Vendors 区添加或改选。</div>}
+      <BilingualFields cfg={cfg} voices={props.voices} params={props.params} inherited={inheritedParams(cfg, props.params)} onChange={patch => set(patch)} />
+      <div className="field-row">
+        <label className="field">
+          <span className="field-head"><span className="mono key">model</span><span className="desc">TTS 模型</span></span>
+          <select value={cfg.model} onChange={e => set({ model: e.target.value })}>
+            {props.models.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">emotion</span><span className="desc">情感(留空不发送)</span></span>
+          <input type="text" value={cfg.emotion} onChange={e => set({ emotion: e.target.value })} placeholder="(empty)" />
+        </label>
+      </div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-head"><span className="mono key">speed</span><span className="desc">[0.5,2.0] 语速</span></span>
+          <input type="number" min={0.5} max={2} step={0.1} value={cfg.speed} onChange={e => set({ speed: Number(e.target.value) || 1 })} />
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">vol</span><span className="desc">(0,10] 音量</span></span>
+          <input type="number" min={0.1} max={10} step={0.1} value={cfg.vol} onChange={e => set({ vol: Number(e.target.value) || 1 })} />
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">pitch</span><span className="desc">[-12,12] 音调</span></span>
+          <input type="number" min={-12} max={12} step={1} value={cfg.pitch} onChange={e => set({ pitch: Number(e.target.value) || 0 })} />
+        </label>
+      </div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-head"><span className="mono key">format</span><span className="desc">file/stream 落盘格式</span></span>
+          <select value={cfg.format} onChange={e => set({ format: e.target.value as MinimaxConfig['format'] })}>
+            {['mp3', 'pcm', 'flac', 'wav'].map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">play_format</span><span className="desc">host_play 播放格式</span></span>
+          <select value={cfg.play_format} onChange={e => set({ play_format: e.target.value as MinimaxConfig['play_format'] })}>
+            {['mp3', 'pcm', 'flac', 'wav'].map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">sample_rate</span><span className="desc">[8000,48000] Hz</span></span>
+          <input type="number" min={8000} max={48000} value={cfg.sample_rate} onChange={e => set({ sample_rate: Number(e.target.value) || 32000 })} />
+        </label>
+      </div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-head"><span className="mono key">bitrate</span><span className="desc">[32000,256000] 仅 mp3</span></span>
+          <input type="number" min={32000} max={256000} value={cfg.bitrate} onChange={e => set({ bitrate: Number(e.target.value) || 128000 })} />
+        </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">channel</span><span className="desc">声道数</span></span>
+          <select value={cfg.channel} onChange={e => set({ channel: Number(e.target.value) as 1 | 2 })}>
+            <option value={1}>1</option>
+            <option value={2}>2</option>
+          </select>
+        </label>
+      </div>
+      <ProfilesEditor profiles={cfg.voice_profiles} voices={props.voices} params={props.params} inherited={inheritedParams(cfg, props.params)} onChange={next => set({ voice_profiles: next })} />
+      <SaveBar dirty={props.dirty} onSave={props.onSave} />
+    </div>
+  )
+}
+
 /** 根组件:bootstrap → 加载数据 → 渲染多 provider 配置表单。 */
 export function App(): JSX.Element {
   const [bootstrap] = useState(readBootstrap)
   const [config, setConfig] = useState<Settings | null>(null)
   const [saved, setSaved] = useState<Settings | null>(null)
   const [status, setStatus] = useState<Status | null>(null)
-  const [voices, setVoices] = useState<Record<string, Voice[]>>({ volcengine: [], 'siliconflow-cn': [], host: [] })
-  const [models, setModels] = useState<Record<string, string[]>>({ volcengine: [], 'siliconflow-cn': [], host: [] })
-  const [params, setParams] = useState<Record<string, TunableParam[]>>({ volcengine: [], 'siliconflow-cn': [], host: [] })
+  const [voices, setVoices] = useState<Record<string, Voice[]>>({ volcengine: [], 'siliconflow-cn': [], host: [], openai: [], minimax: [] })
+  const [models, setModels] = useState<Record<string, string[]>>({ volcengine: [], 'siliconflow-cn': [], host: [], openai: [], minimax: [] })
+  const [params, setParams] = useState<Record<string, TunableParam[]>>({ volcengine: [], 'siliconflow-cn': [], host: [], openai: [], minimax: [] })
   const [error, setError] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
 
@@ -612,28 +873,33 @@ export function App(): JSX.Element {
       rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'volcengine' }),
       rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'siliconflow-cn' }),
       rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'host' }),
-    ]).then(([c, s, v1, v2, v3]) => {
+      rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'openai' }),
+      rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider: 'minimax' }),
+    ]).then(([c, s, v1, v2, v3, v4, v5]) => {
       setConfig(c.config)
       setSaved(c.config)
       setStatus(s.status)
-      setVoices({ volcengine: v1.voices, 'siliconflow-cn': v2.voices, host: v3.voices })
-      setModels({ volcengine: v1.models, 'siliconflow-cn': v2.models, host: v3.models })
-      setParams({ volcengine: v1.params, 'siliconflow-cn': v2.params, host: v3.params })
+      setVoices({ volcengine: v1.voices, 'siliconflow-cn': v2.voices, host: v3.voices, openai: v4.voices, minimax: v5.voices })
+      setModels({ volcengine: v1.models, 'siliconflow-cn': v2.models, host: v3.models, openai: v4.models, minimax: v5.models })
+      setParams({ volcengine: v1.params, 'siliconflow-cn': v2.params, host: v3.params, openai: v4.params, minimax: v5.params })
     }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false))
   }, [bootstrap])
 
-  const saveRegion = useCallback(async (region: 'global' | 'volcengine' | 'siliconflow-cn' | 'host'): Promise<void> => {
+  const saveRegion = useCallback(async (region: Region): Promise<void> => {
     if (bootstrap === undefined || config === null || saved === null) return
     const toSave: Settings = {
       delivery: region === 'global' ? config.delivery : saved.delivery,
       provider: region === 'global' ? config.provider : saved.provider,
       storage: region === 'global' ? config.storage : saved.storage,
       player: region === 'global' ? config.player : saved.player,
+      vendors: region === 'vendors' ? config.vendors : saved.vendors,
       providers: {
         volcengine: region === 'volcengine' ? config.providers.volcengine : saved.providers.volcengine,
         'siliconflow-cn': region === 'siliconflow-cn' ? config.providers['siliconflow-cn'] : saved.providers['siliconflow-cn'],
         host: region === 'host' ? config.providers.host : saved.providers.host,
+        openai: region === 'openai' ? config.providers.openai : saved.providers.openai,
+        minimax: region === 'minimax' ? config.providers.minimax : saved.providers.minimax,
       },
     }
     try {
@@ -644,10 +910,13 @@ export function App(): JSX.Element {
         provider: region === 'global' ? v.config.provider : prev.provider,
         storage: region === 'global' ? v.config.storage : prev.storage,
         player: region === 'global' ? v.config.player : prev.player,
+        vendors: region === 'vendors' ? v.config.vendors : prev.vendors,
         providers: {
           volcengine: region === 'volcengine' ? v.config.providers.volcengine : prev.providers.volcengine,
           'siliconflow-cn': region === 'siliconflow-cn' ? v.config.providers['siliconflow-cn'] : prev.providers['siliconflow-cn'],
           host: region === 'host' ? v.config.providers.host : prev.providers.host,
+          openai: region === 'openai' ? v.config.providers.openai : prev.providers.openai,
+          minimax: region === 'minimax' ? v.config.providers.minimax : prev.providers.minimax,
         },
       })
       rpc<{ status: Status }>(bootstrap, 'status-get').then(s => setStatus(s.status)).catch(() => {})
@@ -668,9 +937,12 @@ export function App(): JSX.Element {
     { delivery: config.delivery, provider: config.provider, storage: config.storage, player: config.player },
     { delivery: saved.delivery, provider: saved.provider, storage: saved.storage, player: saved.player },
   )
+  const vendorsDirty = countDiff(config.vendors, saved.vendors)
   const volDirty = countDiff(config.providers.volcengine, saved.providers.volcengine)
   const sfDirty = countDiff(config.providers['siliconflow-cn'], saved.providers['siliconflow-cn'])
   const hostDirty = countDiff(config.providers.host, saved.providers.host)
+  const openaiDirty = countDiff(config.providers.openai, saved.providers.openai)
+  const minimaxDirty = countDiff(config.providers.minimax, saved.providers.minimax)
 
   return (
     <div className="shell">
@@ -726,6 +998,15 @@ export function App(): JSX.Element {
         <HostCard cfg={config.providers.host} voices={voices.host} dirty={hostDirty}
           onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, host: next } })}
           onSave={() => void saveRegion('host')} />
+        <VendorsCard vendors={config.vendors} dirty={vendorsDirty}
+          onChange={next => setConfig(prev => prev === null ? prev : { ...prev, vendors: next })}
+          onSave={() => void saveRegion('vendors')} />
+        <OpenaiCard bootstrap={bootstrap} cfg={config.providers.openai} vendors={config.vendors} voices={voices.openai} models={models.openai} params={params.openai} dirty={openaiDirty}
+          onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, openai: next } })}
+          onSave={() => void saveRegion('openai')} />
+        <MinimaxCard bootstrap={bootstrap} cfg={config.providers.minimax} vendors={config.vendors} voices={voices.minimax} models={models.minimax} params={params.minimax} dirty={minimaxDirty}
+          onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, minimax: next } })}
+          onSave={() => void saveRegion('minimax')} />
         <datalist id="voice-tts-key-names">
           {KNOWN_KEY_NAMES.map(name => <option key={name} value={name} />)}
         </datalist>

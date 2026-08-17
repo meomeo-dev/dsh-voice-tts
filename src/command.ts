@@ -179,34 +179,36 @@ export function renderStatus(settings: VoiceTtsSettings, providerIds: readonly s
 /** 默认音色 id(供 status 展示)。 */
 export { DEFAULT_VOICE_TYPE }
 
-/** `/dsh-voice-tts-key` 命令的解析结果(provider 可选,缺省用当前 provider)。 */
+/** `/dsh-voice-tts-key` 命令的解析结果(target 可选,缺省用当前 provider)。 */
 export type KeyCommand =
-  | { readonly kind: 'status'; readonly provider?: string }
-  | { readonly kind: 'set'; readonly provider?: string; readonly value: string }
-  | { readonly kind: 'unset'; readonly provider?: string }
+  | { readonly kind: 'status'; readonly target?: string }
+  | { readonly kind: 'set'; readonly target?: string; readonly value: string }
+  | { readonly kind: 'unset'; readonly target?: string }
 
 /**
- * 解析 `/dsh-voice-tts-key` 命令:`set [provider] <value>` 存、`unset [provider]` 删、
- * `status [provider]` 查看状态。provider 缺省由调用方用当前 provider 补齐。
+ * 解析 `/dsh-voice-tts-key` 命令:`set [target] <value>` 存、`unset [target]` 删、
+ * `status [target]` 查看状态。`target` 是 **provider id 或 vendor id**(openai/minimax
+ * 的 key 挂在 vendor 上,故允许直接指定 vendor id 而不切换当前 vendor)。target 缺省由
+ * 调用方用当前 provider 补齐。
  * 该命令 `recordInput: false`,value 不进 session log。
  * @param rawInput - 命令名之后的原始文本(含前导空白)。
- * @param providerIds - 已注册 provider id 列表(用于区分 `set <provider> <value>` 与 `set <value>`)。
+ * @param targets - 已知 provider id + vendor id 列表(用于区分 `set <target> <value>` 与 `set <value>`)。
  * @returns 解析结果;非法输入回退 status。
  */
-export function parseKeyCommand(rawInput: string, providerIds: readonly string[] = []): KeyCommand {
+export function parseKeyCommand(rawInput: string, targets: readonly string[] = []): KeyCommand {
   const parts = rawInput.trim().split(/\s+/u).filter(part => part.length > 0)
   const head = parts[0] ?? ''
   const rest = parts.slice(1)
   if (head === '' || head === 'status') {
-    return { kind: 'status', ...(rest.length > 0 ? { provider: rest[0] } : {}) }
+    return { kind: 'status', ...(rest.length > 0 ? { target: rest[0] } : {}) }
   }
   if (head === 'unset') {
-    return { kind: 'unset', ...(rest.length > 0 ? { provider: rest[0] } : {}) }
+    return { kind: 'unset', ...(rest.length > 0 ? { target: rest[0] } : {}) }
   }
   if (head === 'set') {
     if (rest.length === 0) return { kind: 'status' }
-    if (providerIds.includes(rest[0]!)) {
-      return { kind: 'set', provider: rest[0], value: rest.slice(1).join(' ') }
+    if (targets.includes(rest[0]!)) {
+      return { kind: 'set', target: rest[0], value: rest.slice(1).join(' ') }
     }
     return { kind: 'set', value: rest.join(' ') }
   }

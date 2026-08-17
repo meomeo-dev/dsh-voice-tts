@@ -61,24 +61,29 @@ describe('parseTtsCommand', () => {
 })
 
 describe('parseKeyCommand', () => {
-  it('parses set with a non-empty value (no provider)', () => {
+  it('parses set with a non-empty value (no target)', () => {
     expect(parseKeyCommand('set sk-abc123')).toEqual({ kind: 'set', value: 'sk-abc123' })
   })
 
   it('parses set with an explicit provider', () => {
     expect(parseKeyCommand('set volcengine sk-abc123', ['volcengine', 'siliconflow-cn']))
-      .toEqual({ kind: 'set', provider: 'volcengine', value: 'sk-abc123' })
+      .toEqual({ kind: 'set', target: 'volcengine', value: 'sk-abc123' })
   })
 
-  it('parses unset with optional provider', () => {
+  it('parses set with an explicit vendor target', () => {
+    expect(parseKeyCommand('set 302ai-openai sk-abc123', ['volcengine', 'openai', '302ai-openai']))
+      .toEqual({ kind: 'set', target: '302ai-openai', value: 'sk-abc123' })
+  })
+
+  it('parses unset with optional target', () => {
     expect(parseKeyCommand('unset')).toEqual({ kind: 'unset' })
-    expect(parseKeyCommand('unset volcengine')).toEqual({ kind: 'unset', provider: 'volcengine' })
+    expect(parseKeyCommand('unset volcengine')).toEqual({ kind: 'unset', target: 'volcengine' })
   })
 
   it('treats empty and status as status', () => {
     expect(parseKeyCommand('')).toEqual({ kind: 'status' })
     expect(parseKeyCommand('status')).toEqual({ kind: 'status' })
-    expect(parseKeyCommand('status volcengine')).toEqual({ kind: 'status', provider: 'volcengine' })
+    expect(parseKeyCommand('status volcengine')).toEqual({ kind: 'status', target: 'volcengine' })
   })
 
   it('falls back to status for malformed input', () => {
@@ -113,6 +118,12 @@ describe('renderStatus', () => {
   const settings: VoiceTtsSettings = {
     delivery: 'off',
     provider: 'volcengine',
+    vendors: {
+      '302ai-openai': { label: '302AI', provider: 'openai', baseUrl: 'https://api.302.ai/v1', apiKeyRef: 'TTS_302AI_API_KEY' },
+      '302ai-minimax': { label: '302AI', provider: 'minimax', baseUrl: 'https://api.302.ai/minimaxi/v1', apiKeyRef: 'TTS_302AI_API_KEY' },
+    },
+    storage: { scope: 'user', dir: '' },
+    player: { command: '' },
     providers: {
       volcengine: {
         apiKeyRef: 'VOLCENGINE_TTS_API_KEY',
@@ -142,6 +153,43 @@ describe('renderStatus', () => {
         voices: {},
         voice_profiles: {},
       },
+      host: {
+        command: '/usr/bin/say',
+        voice_type: '',
+        rate: 175,
+        bilingual: 'both',
+        voices: {},
+        voice_profiles: {},
+      },
+      openai: {
+        vendor: '302ai-openai',
+        model: 'tts-1',
+        voice_type: 'alloy',
+        instructions: '',
+        format: 'mp3',
+        play_format: 'mp3',
+        speed: 1,
+        bilingual: 'both',
+        voices: {},
+        voice_profiles: {},
+      },
+      minimax: {
+        vendor: '302ai-minimax',
+        model: 'speech-2.8-turbo',
+        voice_type: 'Chinese (Mandarin)_Reliable_Executive',
+        speed: 1,
+        vol: 1,
+        pitch: 0,
+        emotion: '',
+        sample_rate: 32000,
+        format: 'mp3',
+        play_format: 'wav',
+        bitrate: 128000,
+        channel: 1,
+        bilingual: 'both',
+        voices: {},
+        voice_profiles: {},
+      },
     },
   }
 
@@ -153,6 +201,13 @@ describe('renderStatus', () => {
     expect(text).toContain('apiKeyRef:  SILICONFLOW_API_KEY')
     expect(text).toContain('voice_type: zh_female_vv_uranus_bigtts')
     expect(text).toContain('bilingual:  both')
+  })
+
+  it('reports vendor + apiKeyRef for openai/minimax (not a provider apiKeyRef)', () => {
+    const text = renderStatus(settings, ['volcengine', 'siliconflow-cn', 'host', 'openai', 'minimax'])
+    expect(text).toContain('vendor:     302ai-openai (302AI)')
+    expect(text).toContain('apiKeyRef:  TTS_302AI_API_KEY')
+    expect(text).toContain('vendor:     302ai-minimax (302AI)')
   })
 })
 

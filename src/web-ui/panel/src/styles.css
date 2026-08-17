@@ -252,6 +252,28 @@ body {
   white-space: nowrap;
 }
 
+/* vendor 注册表行编辑器 */
+.vendor-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-l1);
+  border-radius: 6px;
+  background: var(--bg-platform);
+}
+
+.vendor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.vendor-del {
+  justify-self: start;
+}
+
 /* voice_profiles 行编辑器 */
 .profiles {
   display: flex;

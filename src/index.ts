@@ -833,6 +833,18 @@ export function apply(ctx: Context): void {
     return { baseUrl: vendor.baseUrl, apiKey }
   }
 
+  // 把 key 命令的目标解析为 KEY NAME + 展示标签。目标可以是 provider id(volcengine/
+  // siliconflow-cn 直接取 provider 的 apiKeyRef;openai/minimax 取「当前 vendor」的
+  // apiKeyRef),也可以是 vendor id(直接取该 vendor 的 apiKeyRef,不切换当前 vendor)。
+  const keyTargetOf = (target: string, providerIds: readonly string[]): { keyName: string; label: string } => {
+    if (providerIds.includes(target)) {
+      return { keyName: apiKeyRefOf(target), label: `provider "${target}"` }
+    }
+    const vendor = activeSettings.vendors[target]
+    if (vendor === undefined) throw new Error(`unknown provider or vendor "${target}"`)
+    return { keyName: vendor.apiKeyRef, label: `vendor "${target}"` }
+  }
+
   // Providers —— 每个 provider 一个实现,key 按各自 apiKeyRef 解析。
   ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider(() => resolveApiKey('volcengine'))), 'volcengine provider')
   ctx.effect(() => tts.registerProvider(new SiliconflowTtsProvider(() => resolveApiKey('siliconflow-cn'))), 'siliconflow-cn provider')
@@ -946,33 +958,38 @@ export function apply(ctx: Context): void {
   })
 
   // 凭证命令:独立命令 + recordInput:false,让 API key 不进 session log。
-  // set 走 ctx.credentials.set(写入 .credentials.yaml),按 provider 各自的 apiKeyRef;
+  // set 走 ctx.credentials.set(写入 .credentials.yaml);目标(target)可以是 provider id
+  // 或 vendor id(openai/minimax 的 key 挂在 vendor 上,可指定 vendor id 直接设);
   // status 只报 configured/source 不回显值。
   ctx.commands.register({
     name: 'dsh-voice-tts-key',
-    description: 'set/unset a TTS provider API key (recorded privately)',
-    input: { hint: '[set [provider] <value>|unset [provider]|status [provider]]' },
+    description: 'set/unset a TTS provider or vendor API key (recorded privately)',
+    input: { hint: '[set [provider|vendor] <value>|unset [provider|vendor]|status [provider|vendor]]' },
     recordInput: false,
     handler: async invocation => {
-      const command = parseKeyCommand(invocation.rawInput, tts.listProviders())
-      const providerId = command.provider ?? activeSettings.provider
+      const command = parseKeyCommand(invocation.rawInput, [...tts.listProviders(), ...Object.keys(activeSettings.vendors)])
+      const target = command.target ?? activeSettings.provider
       const credentials = ctx.get('credentials')
       if (credentials === undefined) {
         return { kind: 'error', text: 'credentials service is not available' }
       }
-      let ref: ReturnType<typeof credentialRef>
+      let keyName: string
+      let label: string
       try {
-        ref = credentialRef(apiKeyRefOf(providerId))
+        const resolved = keyTargetOf(target, tts.listProviders())
+        keyName = resolved.keyName
+        label = resolved.label
       } catch (error) {
         return { kind: 'error', text: describeError(error) }
       }
+      const ref = credentialRef(keyName)
       if (command.kind === 'set') {
         if (command.value.length === 0) {
-          return { kind: 'error', text: 'usage: /dsh-voice-tts-key set [provider] <value>' }
+          return { kind: 'error', text: 'usage: /dsh-voice-tts-key set [provider|vendor] <value>' }
         }
         try {
           await credentials.set(ref, command.value)
-          return { kind: 'success', text: `API key stored for ${providerId} (${ref}).` }
+          return { kind: 'success', text: `API key stored for ${label} (${ref}).` }
         } catch (error) {
           return { kind: 'error', text: `failed to store API key: ${describeError(error)}` }
         }
@@ -980,14 +997,14 @@ export function apply(ctx: Context): void {
       if (command.kind === 'unset') {
         try {
           await credentials.unset(ref)
-          return { kind: 'success', text: `API key removed for ${providerId} (${ref}).` }
+          return { kind: 'success', text: `API key removed for ${label} (${ref}).` }
         } catch (error) {
           return { kind: 'error', text: `failed to remove API key: ${describeError(error)}` }
         }
       }
       const info = await credentials.describe(ref)
       const source = info.source !== undefined ? `, source: ${info.source}` : ''
-      return { kind: 'success', text: `[${providerId}] ${ref}: configured=${String(info.configured)}${source}, writable=${String(info.writable)}` }
+      return { kind: 'success', text: `[${label}] ${ref}: configured=${String(info.configured)}${source}, writable=${String(info.writable)}` }
     },
   })
 

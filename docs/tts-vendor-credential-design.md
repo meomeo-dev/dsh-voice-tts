@@ -140,11 +140,12 @@ settings.provider（协议，如 'openai'）
 
 ## 5. 凭据管理
 
-- `apiKeyRef` 仍是 KEY NAME，复用 `/dsh-voice-tts-key set|unset|status`（它按 provider 的
-  当前 vendor 取 apiKeyRef）。**当前实现是 provider 维度**：key 命令对「当前选中的 vendor」
-  生效（`apiKeyRefOf` 读 `providers.<id>.vendor` 指向的那条 vendor 的 apiKeyRef）。
-  按「任意 vendor」维度 set/unset/status（不切换当前 vendor）**本轮未做**，见 §7 非目标。
-- `baseUrl` 是明文，直接写 settings；面板 vendor 区提供 `label/provider/baseUrl/apiKeyRef` 编辑（**未做**，见 §7）。
+- `apiKeyRef` 仍是 KEY NAME，复用 `/dsh-voice-tts-key set|unset|status`。该命令的目标
+  （`target`）可以是 **provider id 或 vendor id**：provider id（volcengine/siliconflow-cn 直接
+  取 provider 的 `apiKeyRef`；openai/minimax 取「当前 vendor」的 `apiKeyRef`）；vendor id 直接
+  取该 vendor 的 `apiKeyRef`，**不切换当前 vendor**。解析逻辑见 `index.ts` 的 `keyTargetOf`。
+- `baseUrl` 是明文，直接写 settings；面板 vendor 区提供 `id/label/provider/baseUrl/apiKeyRef`
+  的增删改编辑（见 §6 改造面的 `src/web-ui/panel/*`）。
 
 ## 6. 改造面（文件清单）
 
@@ -156,10 +157,11 @@ settings.provider（协议，如 'openai'）
 | `src/openai-voices.ts` | 新增：`OPENAI_GPT_4O_MINI_TTS_VOICES` / `OPENAI_TTS_1_VOICES`（13 / 9 音色） |
 | `src/minimax-voices.ts` | 新增：`MINIMAX_SPEECH_02_TURBO_VOICES` / `MINIMAX_SPEECH_02_HD_VOICES`（seed） |
 | `src/provider-openai.ts` / `provider-minimax.ts` | 新增：`TtsProvider` 实现，注入 `resolveEndpoint()` |
-| `src/index.ts` | 注册两个 provider；`resolveEndpoint(vendorId)`；SCHEMA/DEFAULT_SETTINGS 增 vendors + 两 provider |
-| `src/command.ts` | `renderConfigTemplate`/`renderStatus` 支持 openai/minimax + vendor |
-| `src/web-ui/panel/*` | ~~面板增 vendor 管理 + openai/minimax provider 卡片~~ **未做**（backend RPC seam 已就绪，UI 缺 openai/minimax/vendor 卡片，见 §7） |
+| `src/index.ts` | 注册两个 provider；`resolveEndpoint(vendorId)`；`keyTargetOf`（provider/vendor → KEY NAME）；SCHEMA/DEFAULT_SETTINGS 增 vendors + 两 provider |
+| `src/command.ts` | `renderConfigTemplate`/`renderStatus` 支持 openai/minimax + vendor；`parseKeyCommand` 目标改为 provider|vendor |
+| `src/web-ui/panel/*` | 面板增 vendor 管理（增删改）+ openai/minimax provider 卡片（vendor 下拉 + 选中 vendor 的 key 管理） |
 | `tests/openai.spec.ts` / `tests/minimax.spec.ts` | 新增：请求构造/响应解析/流式 SSE 解析/hex 解码/异常 |
+| `tests/command.spec.ts` | `parseKeyCommand` 支持 vendor 目标；`renderStatus` 覆盖 openai/minimax 的 vendor + apiKeyRef |
 | `docs/tts-vendor-credential-design.md` | 本文 |
 
 ## 7. 非目标（本轮不做）
@@ -167,17 +169,13 @@ settings.provider（协议，如 'openai'）
 - 迁移现有 `volcengine` / `siliconflow-cn` / `host` 到 vendor 模型（它们仍用旧 `apiKeyRef` 单一 key；vendor 模型先服务新增的 openai/minimax）。
 - 音色克隆（ElevenLabs/Fish）、Gemini TTS（多模态语音）——见选型文档，另立需求。
 - 逐 vendor 的配额/用量统计。
-- **Web 面板的 vendor 管理 + openai/minimax provider 卡片**（backend `PanelDeps` 的
-  `listModels`/`listParams` 已支持 openai/minimax，但前端 `App.tsx` 只渲染
-  volcengine/siliconflow-cn/host 三张卡片，无 vendor 编辑 UI）。
-- **按任意 vendor（非当前 vendor）的 key set/unset/status**（key 命令当前是 provider 维度）。
 
 ## 8. 验收标准（AC）
 
 1. `vendors` 可定义多个 vendor，每个含 `label/provider/baseUrl/apiKeyRef`；openai 与 minimax 各能挂多个 vendor。
 2. 切换 `providers.<protocol>.vendor` 即可换源，合成参数（voice_type/speed/…）不变。
-3. `api_key` 只经 credentials 解析，settings 永不落明文密钥；`/dsh-voice-tts-key` 能对「当前 provider 当前 vendor」set/unset/status（按任意 vendor 维度见 §7 非目标）。
+3. `api_key` 只经 credentials 解析，settings 永不落明文密钥；`/dsh-voice-tts-key` 能对「provider 或 vendor」set/unset/status（vendor 目标直接指定 vendor id，不切换当前 vendor）。
 4. OpenAI 合成走 `POST {baseUrl}/audio/speech`（`baseUrl` 含 `/v1`），`tts-1`/`tts-1-hd` 输出 mp3/opus/aac/flac 与流式均正确；9 音色可列。
 5. MiniMax 合成走 302AI `/t2a_v2`，非流式与流式 `data.audio` 均 hex 正确还原为音频；`voice_id`/`emotion`/`audio_setting` 生效；SSE 流式兼容 LF/CRLF 分隔且不丢末帧。
 6. 缺 vendor / vendor 不存在 / 缺 key / 协议不匹配时合成当场报可读错误（fail loud），不静默回退、不崩。
-7. `pnpm test` + `pnpm typecheck` + `pnpm build` 全绿。（面板 vendor 配置 UI 见 §7 非目标。）
+7. `pnpm test` + `pnpm typecheck` + `pnpm build` 全绿；面板可增删改 vendor、配置 openai/minimax 卡片（vendor 下拉 + 选中 vendor 的 key 管理）。

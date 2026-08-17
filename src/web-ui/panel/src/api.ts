@@ -41,6 +41,7 @@ export interface VoiceSlot {
   loudness_rate?: number
   speed?: number
   gain?: number
+  vol?: number
 }
 
 /** 各语言类别槽位(镜像 host 侧 VoiceTtsVoices)。 */
@@ -88,16 +89,52 @@ export interface HostConfig extends BilingualFields {
   rate: number
 }
 
+/** 一个 vendor(镜像 host 侧 VendorRecord)。 */
+export interface VendorRecord {
+  label: string
+  provider: 'openai' | 'minimax'
+  baseUrl: string
+  apiKeyRef: string
+}
+
+/** OpenAI provider 配置(镜像 host 侧 OpenaiConfig)。 */
+export interface OpenaiConfig extends BilingualFields {
+  vendor: string
+  model: string
+  instructions: string
+  format: 'mp3' | 'opus' | 'aac' | 'flac'
+  play_format: 'mp3' | 'opus' | 'aac' | 'flac'
+  speed: number
+}
+
+/** MiniMax provider 配置(镜像 host 侧 MinimaxConfig)。 */
+export interface MinimaxConfig extends BilingualFields {
+  vendor: string
+  model: string
+  speed: number
+  vol: number
+  pitch: number
+  emotion: string
+  sample_rate: number
+  format: 'mp3' | 'pcm' | 'flac' | 'wav'
+  play_format: 'mp3' | 'pcm' | 'flac' | 'wav'
+  bitrate: number
+  channel: 1 | 2
+}
+
 /** voice-tts 设置(镜像 host 侧 VoiceTtsSettings)。 */
 export interface Settings {
   delivery: 'off' | 'file' | 'host_play' | 'stream'
   provider: string
   storage: { scope: 'user' | 'project'; dir: string }
   player: { command: string }
+  vendors: Record<string, VendorRecord>
   providers: {
     volcengine: VolcengineConfig
     'siliconflow-cn': SiliconflowConfig
     host: HostConfig
+    openai: OpenaiConfig
+    minimax: MinimaxConfig
   }
 }
 
