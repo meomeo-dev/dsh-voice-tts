@@ -96,6 +96,7 @@ export function apply(ctx: ClientContext): void {
     'conversation.hero.voice',
     () => ctx.slots.register({
       name: 'conversation.hero.voice',
+      id: 'voice-tts-hero-fallback',
       locale: NS,
       inject: heroActions,
     }, VoiceTtsHeroAction),
