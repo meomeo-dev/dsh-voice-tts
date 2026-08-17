@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@meomeo-dev/dsh-voice/client'
 import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { VoiceTtsHeaderAction, type VoiceTtsHeaderInjected } from './VoiceTtsHeaderAction.tsx'
+import { VoiceTtsHeroAction, type VoiceTtsHeroInjected } from './VoiceTtsHeroAction.tsx'
 import { VoiceTtsMenu, type VoiceTtsInjected } from './VoiceTtsMenu.tsx'
 import { TurnTailPlayer } from './TurnTailPlayer.tsx'
 import { en, NS, zh, type VoiceTtsSlotKey } from './locales.ts'
@@ -75,6 +76,37 @@ export function apply(ctx: ClientContext): void {
     () => ctx.slots.register({
       name: 'voice.menu',
       id: 'voice-tts',
+      locale: NS,
+      inject: actions,
+    }, VoiceTtsMenu),
+  )
+
+  // 🔊 hero 回落入口：只有 `voice.hero.menu` 未声明（dsh-voice 未装）时显示。
+  const heroActions = (): VoiceTtsHeroInjected => ({
+    ...actions(),
+    hooks: {
+      voiceHeroMenuDeclared: {
+        getSnapshot: () => ctx.slots.spec('voice.hero.menu') !== undefined,
+        subscribe: fn => ctx.slots.subscribe('voice.hero.menu', fn),
+      } satisfies HostObservable<boolean>,
+    },
+  })
+
+  ctx.slots.inject(
+    'conversation.hero.voice',
+    () => ctx.slots.register({
+      name: 'conversation.hero.voice',
+      locale: NS,
+      inject: heroActions,
+    }, VoiceTtsHeroAction),
+  )
+
+  // 合并入口（hero）：dsh-voice 存在时注入 voice.hero.menu。
+  ctx.slots.inject(
+    'voice.hero.menu',
+    () => ctx.slots.register({
+      name: 'voice.hero.menu',
+      id: 'voice-tts-hero',
       locale: NS,
       inject: actions,
     }, VoiceTtsMenu),
