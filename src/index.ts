@@ -24,7 +24,11 @@ import { HostTtsProvider } from './provider-host.js'
 import { DEFAULT_VOICE_TYPE, DEFAULT_VOLCENGINE_API_KEY_REF, VOLCENGINE_RESOURCE_IDS, VOLCENGINE_TUNABLE_PARAMS } from './volcengine.js'
 import { DEFAULT_SILICONFLOW_API_KEY_REF, DEFAULT_SILICONFLOW_MODEL, DEFAULT_SILICONFLOW_VOICE, SILICONFLOW_MODELS, SILICONFLOW_TUNABLE_PARAMS } from './siliconflow.js'
 import { DEFAULT_HOST_COMMAND, DEFAULT_HOST_RATE, HOST_OUTPUT_FORMAT } from './host.js'
-import type { BilingualVoiceConfig, TunableParam, VoiceSlot, VoiceTtsSettings } from './types.js'
+import { OpenaiTtsProvider } from './provider-openai.js'
+import { MinimaxTtsProvider } from './provider-minimax.js'
+import { DEFAULT_OPENAI_MODEL, DEFAULT_OPENAI_VENDOR, DEFAULT_OPENAI_VOICE, OPENAI_MODELS, OPENAI_TUNABLE_PARAMS } from './openai.js'
+import { DEFAULT_MINIMAX_MODEL, DEFAULT_MINIMAX_VENDOR, DEFAULT_MINIMAX_VOICE, MINIMAX_MODELS, MINIMAX_TUNABLE_PARAMS } from './minimax.js'
+import type { BilingualVoiceConfig, ResolvedEndpoint, TunableParam, Vendors, VoiceSlot, VoiceTtsSettings } from './types.js'
 import { planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
 import type { TurnEventLike } from './turn-final.js'
@@ -95,10 +99,28 @@ function voiceProfilesSchema(params: readonly TunableParam[]) {
 
 const BILINGUAL_SCHEMA = z.union(['both', 'english_only', 'chinese_only'] as const).default('both')
 
+/** 一个 vendor 的 schema(密钥只存引用名,真值在 credentials)。 */
+const VENDOR_SCHEMA = z.object({
+  label: z.string(),
+  provider: z.union(['openai', 'minimax'] as const),
+  baseUrl: z.string(),
+  apiKeyRef: z.string(),
+})
+
+/** 302AI 默认 vendor 的密钥引用名(KEY NAME,真值在 .env / credentials)。 */
+const TTS_302AI_API_KEY_REF = 'TTS_302AI_API_KEY'
+
+/** 默认 vendor 注册表:302AI 同时服务 openai 与 minimax,各占一条(不同 baseUrl)。 */
+const DEFAULT_VENDORS: Vendors = {
+  [DEFAULT_OPENAI_VENDOR]: { label: '302AI', provider: 'openai', baseUrl: 'https://api.302.ai/v1', apiKeyRef: TTS_302AI_API_KEY_REF },
+  [DEFAULT_MINIMAX_VENDOR]: { label: '302AI', provider: 'minimax', baseUrl: 'https://api.302.ai/minimaxi/v1', apiKeyRef: TTS_302AI_API_KEY_REF },
+}
+
 /** 该命名空间的 schema:多 provider,每个 provider 有自己的 apiKeyRef + 合成参数。 */
 const SCHEMA: z<VoiceTtsSettings> = z.object({
   delivery: z.union(['off', 'file', 'host_play', 'stream'] as const).default('off'),
   provider: z.string().default('volcengine'),
+  vendors: z.dict(VENDOR_SCHEMA).default(DEFAULT_VENDORS),
   storage: z.object({
     scope: z.union(['user', 'project'] as const).default('user'),
     dir: z.string().default(''),
@@ -143,6 +165,35 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       voices: voicesSchema([]),
       voice_profiles: voiceProfilesSchema([]),
     }),
+    openai: z.object({
+      vendor: z.string().default(DEFAULT_OPENAI_VENDOR),
+      model: z.string().default(DEFAULT_OPENAI_MODEL),
+      voice_type: z.string().default(DEFAULT_OPENAI_VOICE),
+      instructions: z.string().default(''),
+      format: z.union(['mp3', 'opus', 'aac', 'flac'] as const).default('mp3'),
+      play_format: z.union(['mp3', 'opus', 'aac', 'flac'] as const).default('mp3'),
+      speed: z.number().step(0.05).min(0.25).max(4).default(1),
+      bilingual: BILINGUAL_SCHEMA,
+      voices: voicesSchema(OPENAI_TUNABLE_PARAMS),
+      voice_profiles: voiceProfilesSchema(OPENAI_TUNABLE_PARAMS),
+    }),
+    minimax: z.object({
+      vendor: z.string().default(DEFAULT_MINIMAX_VENDOR),
+      model: z.string().default(DEFAULT_MINIMAX_MODEL),
+      voice_type: z.string().default(DEFAULT_MINIMAX_VOICE),
+      speed: z.number().step(0.1).min(0.5).max(2).default(1),
+      vol: z.number().step(0.1).min(0.1).max(10).default(1),
+      pitch: z.number().step(1).min(-12).max(12).default(0),
+      emotion: z.string().default(''),
+      sample_rate: z.number().step(1).min(8000).max(48000).default(32000),
+      format: z.union(['mp3', 'pcm', 'flac', 'wav'] as const).default('mp3'),
+      play_format: z.union(['mp3', 'pcm', 'flac', 'wav'] as const).default('wav'),
+      bitrate: z.number().step(1).min(32000).max(256000).default(128000),
+      channel: z.union([1, 2] as const).default(1),
+      bilingual: BILINGUAL_SCHEMA,
+      voices: voicesSchema(MINIMAX_TUNABLE_PARAMS),
+      voice_profiles: voiceProfilesSchema(MINIMAX_TUNABLE_PARAMS),
+    }),
   }),
 })
 
@@ -150,6 +201,7 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
 const DEFAULT_SETTINGS: VoiceTtsSettings = {
   delivery: 'off',
   provider: 'volcengine',
+  vendors: DEFAULT_VENDORS,
   storage: { scope: 'user', dir: '' },
   player: { command: '' },
   providers: {
@@ -185,6 +237,35 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       command: DEFAULT_HOST_COMMAND,
       voice_type: '',
       rate: DEFAULT_HOST_RATE,
+      bilingual: 'both',
+      voices: {},
+      voice_profiles: {},
+    },
+    openai: {
+      vendor: DEFAULT_OPENAI_VENDOR,
+      model: DEFAULT_OPENAI_MODEL,
+      voice_type: DEFAULT_OPENAI_VOICE,
+      instructions: '',
+      format: 'mp3',
+      play_format: 'mp3',
+      speed: 1,
+      bilingual: 'both',
+      voices: {},
+      voice_profiles: {},
+    },
+    minimax: {
+      vendor: DEFAULT_MINIMAX_VENDOR,
+      model: DEFAULT_MINIMAX_MODEL,
+      voice_type: DEFAULT_MINIMAX_VOICE,
+      speed: 1,
+      vol: 1,
+      pitch: 0,
+      emotion: '',
+      sample_rate: 32000,
+      format: 'mp3',
+      play_format: 'wav',
+      bitrate: 128000,
+      channel: 1,
       bilingual: 'both',
       voices: {},
       voice_profiles: {},
@@ -242,6 +323,14 @@ function deliveryView(settings: VoiceTtsSettings): DeliveryView {
     const s = settings.providers['siliconflow-cn']
     return { bilingual: s.bilingual, voice_type: s.voice_type, voices: s.voices, voice_profiles: s.voice_profiles, format: s.format, play_format: s.play_format }
   }
+  if (provider === 'openai') {
+    const o = settings.providers.openai
+    return { bilingual: o.bilingual, voice_type: o.voice_type, voices: o.voices, voice_profiles: o.voice_profiles, format: o.format, play_format: o.play_format }
+  }
+  if (provider === 'minimax') {
+    const m = settings.providers.minimax
+    return { bilingual: m.bilingual, voice_type: m.voice_type, voices: m.voices, voice_profiles: m.voice_profiles, format: m.format, play_format: m.play_format }
+  }
   if (provider === 'host') {
     const h = settings.providers.host
     return { bilingual: h.bilingual, voice_type: h.voice_type, voices: h.voices, voice_profiles: h.voice_profiles, format: HOST_OUTPUT_FORMAT, play_format: HOST_OUTPUT_FORMAT }
@@ -265,6 +354,12 @@ function synthConfig(settings: VoiceTtsSettings, voice: string, format: string, 
   }
   if (provider === 'siliconflow-cn') {
     return { ...settings.providers['siliconflow-cn'], voice_type: voice, format, ...params }
+  }
+  if (provider === 'openai') {
+    return { ...settings.providers.openai, voice_type: voice, format, ...params }
+  }
+  if (provider === 'minimax') {
+    return { ...settings.providers.minimax, voice_type: voice, format, ...params }
   }
   if (provider === 'host') {
     return { ...settings.providers.host, voice_type: voice, format, ...params }
@@ -617,11 +712,15 @@ function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: (sessionId
       listModels(providerId) {
         if (providerId === 'volcengine') return VOLCENGINE_RESOURCE_IDS
         if (providerId === 'siliconflow-cn') return SILICONFLOW_MODELS
+        if (providerId === 'openai') return OPENAI_MODELS
+        if (providerId === 'minimax') return MINIMAX_MODELS
         return []
       },
       listParams(providerId) {
         if (providerId === 'volcengine') return VOLCENGINE_TUNABLE_PARAMS
         if (providerId === 'siliconflow-cn') return SILICONFLOW_TUNABLE_PARAMS
+        if (providerId === 'openai') return OPENAI_TUNABLE_PARAMS
+        if (providerId === 'minimax') return MINIMAX_TUNABLE_PARAMS
         return []
       },
       async keyStatus(ref) {
@@ -680,10 +779,17 @@ export function apply(ctx: Context): void {
     return tone === undefined || tone === '' || tone === 'off' ? undefined : tone
   }
 
-  // 取某 provider 的凭证引用名(KEY NAME)。未知 provider 抛错。
+  // 取某 provider 的凭证引用名(KEY NAME)。openai/minimax 的 key 挂在 vendor 上,
+  // 故按 provider 当前 vendor 取 apiKeyRef;未知 provider 抛错。
   const apiKeyRefOf = (providerId: string): string => {
     if (providerId === 'volcengine') return activeSettings.providers.volcengine.apiKeyRef
     if (providerId === 'siliconflow-cn') return activeSettings.providers['siliconflow-cn'].apiKeyRef
+    if (providerId === 'openai' || providerId === 'minimax') {
+      const vendorId = providerId === 'openai' ? activeSettings.providers.openai.vendor : activeSettings.providers.minimax.vendor
+      const vendor = activeSettings.vendors[vendorId]
+      if (vendor === undefined) throw new Error(`unknown vendor "${vendorId}" referenced by ${providerId} (check settings.vendors)`)
+      return vendor.apiKeyRef
+    }
     if (providerId === 'host') throw new Error('the host provider has no API key (local command-line synthesis)')
     throw new Error(`unknown TTS provider "${providerId}"`)
   }
@@ -703,10 +809,36 @@ export function apply(ctx: Context): void {
     throw new Error(`missing API key for ${providerId}: store ${ref} through the credentials service (dsh credentials) or export it in the environment`)
   }
 
+  // endpoint 解析:openai/minimax 的合成走 vendor——按 config.vendor 查 settings.vendors
+  // 得 baseUrl + apiKeyRef,再经 credentials seam 解析密钥。缺 vendor / 协议不匹配 / 缺 key
+  // 当场抛可读错误(US4,fail loud,不静默回退)。
+  const resolveEndpointFor = async (providerId: string, vendorId: string): Promise<ResolvedEndpoint> => {
+    const vendor = activeSettings.vendors[vendorId]
+    if (vendor === undefined) throw new Error(`unknown vendor "${vendorId}" (check settings.vendors)`)
+    if (vendor.provider !== providerId) throw new Error(`vendor "${vendorId}" is for provider "${vendor.provider}", not "${providerId}"`)
+    const ref = credentialRef(vendor.apiKeyRef)
+    const credentials = ctx.get('credentials')
+    let apiKey: string | undefined
+    if (credentials !== undefined) {
+      const hit = await credentials.resolve(ref)
+      if (hit !== undefined) apiKey = hit.value
+    }
+    if (apiKey === undefined) {
+      const ambient = process.env[vendor.apiKeyRef]
+      if (ambient !== undefined && ambient.length > 0) apiKey = ambient
+    }
+    if (apiKey === undefined) {
+      throw new Error(`missing API key for ${providerId} (vendor "${vendorId}"): store ${vendor.apiKeyRef} through the credentials service (dsh credentials) or export it in the environment`)
+    }
+    return { baseUrl: vendor.baseUrl, apiKey }
+  }
+
   // Providers —— 每个 provider 一个实现,key 按各自 apiKeyRef 解析。
   ctx.effect(() => tts.registerProvider(new VolcengineTtsProvider(() => resolveApiKey('volcengine'))), 'volcengine provider')
   ctx.effect(() => tts.registerProvider(new SiliconflowTtsProvider(() => resolveApiKey('siliconflow-cn'))), 'siliconflow-cn provider')
   ctx.effect(() => tts.registerProvider(new HostTtsProvider()), 'host provider')
+  ctx.effect(() => tts.registerProvider(new OpenaiTtsProvider(vendorId => resolveEndpointFor('openai', vendorId))), 'openai provider')
+  ctx.effect(() => tts.registerProvider(new MinimaxTtsProvider(vendorId => resolveEndpointFor('minimax', vendorId))), 'minimax provider')
 
   // 单一播放权威:host_play 与浏览器 <audio> 的统一状态机(设计 §4)。后端工厂按
   // settings.player.command 探测 ffplay → afplay(可暂停/可 seek 的 ffplay 优先)。
@@ -807,7 +939,7 @@ export function apply(ctx: Context): void {
     })
     ctx.commands.register({
       name: 'dsh-voice-tts',
-      description: 'text-to-speech synthesis and config (volcengine seed-tts-2.0)',
+      description: 'text-to-speech synthesis and config',
       input: { hint: '[status|list-voices|config|speak|ui]' },
       handler: invocation => executeTtsCommand(tts, scope, invocation, resolveVoiceId, playback, storageRoot),
     })

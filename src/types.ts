@@ -98,22 +98,24 @@ export interface TunableParam {
 
 /**
  * 一个语言类别槽位:音色(`voice_type`)+ 可选的可调合成参数。
- * 参数键随 provider(volcengine 与 siliconflow-cn 各不同);槽位未写的参数
- * 回退 provider 顶层同名字段(见 design.md §7.5)。
+ * 参数键随 provider(volcengine / siliconflow-cn / openai / minimax 各不同);
+ * 槽位未写的参数回退 provider 顶层同名字段(见 design.md §7.5)。
  */
 export interface VoiceSlot {
-  /** 音色(`voice_type`):volcengine 的 `speaker` / siliconflow 的 `voice`。缺省回退 provider 顶层 `voice_type`。 */
+  /** 音色(`voice_type`):volcengine 的 `speaker` / siliconflow 与 openai 的 `voice` / minimax 的 `voice_id`。缺省回退 provider 顶层 `voice_type`。 */
   readonly voice_type?: string
-  /** volcengine:音调 [-12,12]。 */
+  /** volcengine:音调 [-12,12];minimax:音调 [-12,12]。 */
   readonly pitch?: number
   /** volcengine:语速 [-50,100]。 */
   readonly speech_rate?: number
   /** volcengine:音量 [-50,100]。 */
   readonly loudness_rate?: number
-  /** siliconflow-cn:语速 [0.25,4.0]。 */
+  /** siliconflow-cn/openai:语速 [0.25,4.0];minimax:语速 [0.5,2.0]。 */
   readonly speed?: number
   /** siliconflow-cn:音量增益 dB [-10,10]。 */
   readonly gain?: number
+  /** minimax:音量 (0,10]。 */
+  readonly vol?: number
 }
 
 /** 各语言类别的音色槽位(缺省回退 `voice_type`)。 */
@@ -156,7 +158,7 @@ export interface PlayerConfig {
 export interface BilingualVoiceConfig {
   /** bilingual 播报模式。 */
   bilingual: BilingualMode
-  /** 默认音色 ID(volcengine 的 `speaker` / siliconflow 的 `voice`,值随 provider)。 */
+  /** 默认音色 ID(volcengine 的 `speaker` / siliconflow 与 openai 的 `voice` / minimax 的 `voice_id`,值随 provider)。 */
   voice_type: string
   /** 各语言类别音色覆盖(缺省回退 voice_type)。 */
   voices: VoiceTtsVoices
@@ -219,6 +221,71 @@ export interface HostConfig extends BilingualVoiceConfig {
   rate: number
 }
 
+/** 一个 vendor:某个协议的 endpoint + 密钥引用。同一协议可接多个 vendor(不同折扣的 reseller)。 */
+export interface VendorRecord {
+  /** 展示名。 */
+  label: string
+  /** 所属协议 provider id(openai / minimax)。 */
+  provider: 'openai' | 'minimax'
+  /** endpoint 前缀(host + 版本前缀),与 provider 协议层的 path 拼接成完整 URL。 */
+  baseUrl: string
+  /** 密钥引用名(KEY NAME);真值经 credentials seam 解析,不进 settings。 */
+  apiKeyRef: string
+}
+
+/** vendor 注册表(键 = vendor id)。 */
+export type Vendors = Record<string, VendorRecord>
+
+/** 一次 endpoint 解析结果:vendor 的 baseUrl + 已解析的 api key。 */
+export interface ResolvedEndpoint {
+  /** endpoint 前缀(host + 版本前缀)。 */
+  readonly baseUrl: string
+  /** API key 真值(已经 credentials seam 解析)。 */
+  readonly apiKey: string
+}
+
+/** OpenAI TTS provider 的已解析配置(走 vendor 注册表,无独立 apiKeyRef)。 */
+export interface OpenaiConfig extends BilingualVoiceConfig {
+  /** 指向 vendors 里的 id。 */
+  vendor: string
+  /** TTS 模型 id,如 `tts-1` / `tts-1-hd`。 */
+  model: string
+  /** 自然语言控情绪/语速/口音(仅 gpt-4o-mini-tts;tts-1 忽略)。 */
+  instructions: string
+  /** 输出格式(file/stream 落盘用)。 */
+  format: 'mp3' | 'opus' | 'aac' | 'flac'
+  /** host_play 的合成格式(OpenAI 无 wav,默认 mp3;ffplay/afplay 均播 mp3)。 */
+  play_format: 'mp3' | 'opus' | 'aac' | 'flac'
+  /** 语速,[0.25, 4.0]。 */
+  speed: number
+}
+
+/** MiniMax TTS provider 的已解析配置(走 vendor 注册表)。 */
+export interface MinimaxConfig extends BilingualVoiceConfig {
+  /** 指向 vendors 里的 id。 */
+  vendor: string
+  /** TTS 模型 id,如 `speech-2.8-turbo`。 */
+  model: string
+  /** 语速,[0.5, 2.0]。 */
+  speed: number
+  /** 音量,(0, 10]。 */
+  vol: number
+  /** 音调,[-12, 12]。 */
+  pitch: number
+  /** 情感,如 happy/sad/angry/calm/fluent。 */
+  emotion: string
+  /** 采样率 Hz。 */
+  sample_rate: number
+  /** 输出格式。 */
+  format: 'mp3' | 'pcm' | 'flac' | 'wav'
+  /** host_play 的合成格式(跨平台播放器兼容,默认 wav)。 */
+  play_format: 'mp3' | 'pcm' | 'flac' | 'wav'
+  /** 码率(仅 mp3)。 */
+  bitrate: number
+  /** 声道数。 */
+  channel: 1 | 2
+}
+
 /** `voice-tts` 设置命名空间的已解析切片(多 provider)。 */
 export interface VoiceTtsSettings {
   /** turn-final 交付方式:off 不处理 / file 落盘 / host_play 本机播放 / stream 流式。 */
@@ -229,10 +296,14 @@ export interface VoiceTtsSettings {
   storage: StorageConfig
   /** 本机播放器配置(见 docs/audio-storage-and-playback.md §4.2)。 */
   player: PlayerConfig
+  /** vendor 注册表(endpoint + key 引用,openai/minimax 从这取 endpoint)。 */
+  vendors: Vendors
   /** 各 provider 的设置(键 = provider id,与注册的 provider 一一对应)。 */
   providers: {
     volcengine: VolcengineProviderSettings
     'siliconflow-cn': SiliconflowProviderSettings
     host: HostConfig
+    openai: OpenaiConfig
+    minimax: MinimaxConfig
   }
 }

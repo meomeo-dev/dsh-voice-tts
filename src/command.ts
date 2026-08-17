@@ -9,12 +9,14 @@ import type { ApiKeyRefSettings } from './types.js'
 import { DEFAULT_VOICE_TYPE, VOLCENGINE_CONFIG_TEMPLATE } from './volcengine.js'
 import { SILICONFLOW_CONFIG_TEMPLATE } from './siliconflow.js'
 import { HOST_CONFIG_TEMPLATE } from './host.js'
+import { OPENAI_CONFIG_TEMPLATE } from './openai.js'
+import { MINIMAX_CONFIG_TEMPLATE } from './minimax.js'
 
 /** 命令用法回显文案。 */
 export const USAGE = [
   'Usage: /dsh-voice-tts [status|help]',
   '  status                            # 当前 provider / delivery / 各 provider 配置概览',
-  '  use <provider>                    # 切换当前 provider(如 volcengine / siliconflow-cn / host)',
+  '  use <provider>                    # 切换当前 provider(如 volcengine / siliconflow-cn / openai / minimax / host)',
   '  list-voices [provider] [query]    # 列出可用音色(可按 voice_type/名称/场景/语种过滤)',
   '  config --template [provider]      # 输出某 provider 的完整配置模板(JSON)',
   '  config --json <json>              # 用 JSON 覆盖「当前 provider」的配置(部分字段即可)',
@@ -129,6 +131,8 @@ export function listVoicesText(voices: readonly TtsVoice[], provider: string): s
 export function renderConfigTemplate(providerId: string): string {
   if (providerId === 'siliconflow-cn') return JSON.stringify(SILICONFLOW_CONFIG_TEMPLATE, null, 2)
   if (providerId === 'host') return JSON.stringify(HOST_CONFIG_TEMPLATE, null, 2)
+  if (providerId === 'openai') return JSON.stringify(OPENAI_CONFIG_TEMPLATE, null, 2)
+  if (providerId === 'minimax') return JSON.stringify(MINIMAX_CONFIG_TEMPLATE, null, 2)
   return JSON.stringify(VOLCENGINE_CONFIG_TEMPLATE, null, 2)
 }
 
@@ -156,6 +160,12 @@ export function renderStatus(settings: VoiceTtsSettings, providerIds: readonly s
       lines.push(`  command:    ${h.command}`)
       lines.push(`  voice_type: ${h.voice_type || '(system default)'}`)
       lines.push(`  rate:       ${h.rate}`)
+    } else if (id === 'openai' || id === 'minimax') {
+      const o = cfg as BilingualVoiceConfig & { vendor: string }
+      const vendor = settings.vendors[o.vendor]
+      lines.push(`  vendor:     ${o.vendor}${vendor === undefined ? ' (unknown!)' : ` (${vendor.label})`}`)
+      lines.push(`  apiKeyRef:  ${vendor?.apiKeyRef ?? '(unknown)'}`)
+      lines.push(`  voice_type: ${c.voice_type}`)
     } else {
       lines.push(`  apiKeyRef:  ${c.apiKeyRef}`)
       lines.push(`  voice_type: ${c.voice_type}`)
