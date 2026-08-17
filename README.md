@@ -20,6 +20,9 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
 - **providers**:
   - **volcengine**:单向流式 HTTP 合成(`POST .../tts/unidirectional`),NDJSON 流式响应解析 + 逐分片流式合成。
   - **siliconflow-cn**:Bearer 鉴权 + 二进制/流式响应(`POST .../v1/audio/speech`),CosyVoice2-0.5B 8 个预设音色。
+  - **host**:本地命令行合成(`macOS say`),输出 AIFF,无需 API key。
+  - **openai**:OpenAI 兼容 `POST /v1/audio/speech`(tts-1 / tts-1-hd),经 vendor 表解析 baseUrl + key。
+  - **minimax**:DashScope 风格 `POST /minimaxi/v1/t2a_v2`(speech-2.8-turbo),hex 音频 + SSE 流式,经 vendor 表解析 baseUrl + key。
 - **命令** `/dsh-voice-tts`:
   - `status` — 当前 provider / delivery / 各 provider 配置概览
   - `use <provider>` — 切换当前 provider
@@ -33,6 +36,8 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
 - **per-voice 音色映射**(`voice_profiles`):软读 dsh-voice 当前口吻 id(`voice.tone`),按 id 命中整套 `voices` 覆盖,未命中回退全局 `voices`。
 - **槽位可调参数**:`voices`/`voice_profiles` 的每个语言槽位是 `{ voice_type, ...可调参数 }`,槽位未写的参数回退 provider 顶层字段(volcengine:`pitch`/`speech_rate`/`loudness_rate`;siliconflow-cn:`speed`/`gain`),用于补偿不同音色之间的响度/语速差异。
 - **turn-final 交付**:`delivery≠off` 时,监听 `session/event` 的 `turn/end`,每轮结束提取最终 assistant 文本按 delivery 交付(纯插件,不改 dsh 源码)。
+- **Web UI 入口**(slot 化,与 dsh-voice 共存):header 的 🔊 下拉(Set voice tts / Turn on-off / Stop host play)挂在 `conversation.session.header.actions`;新建会话 hero 屏的 🔊 回落挂在 `conversation.hero.voice`,并把 TTS 条目注入 dsh-voice 的 `voice.hero.menu`(有 dsh-voice 时回落返回 null 不重复图标)。
+- **turn-tail 播放控制器**:吸附在每条回复末尾,三态(空闲 / 浏览器 `<audio>` 播放 / host 播放)渲染播放/暂停/停止 + 进度;host_play 暂停/恢复/seek 由 ffplay 后端支撑,页面刷新后仍可读到并停掉 host 播放。
 - **API key 命令** `/dsh-voice-tts-key set|unset|status [provider]`:收敛到 credentials seam,`recordInput:false`,按 provider 的 KEY NAME 管理,`status` 不回显值。
 
 ## 配置

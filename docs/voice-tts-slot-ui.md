@@ -123,3 +123,18 @@ package.json          # + dsh.client + exports["./client"] + tsdown dev dep
 - **两个 🔊/🎙️ 并排**：这是 list slot 的既定形态。若用户坚持「合并成一个按钮」，需二选一：dsh-voice 把菜单项让渡给一个共享 slot（改动 dsh-voice），或接受并排。本期按「并排」交付，不引入跨包耦合。
 - **toggle 的「开」值**：恢复 `lastOnDelivery`（默认 `host_play`），避免把 `file`/`stream` 误改回 `host_play`；跨重启 `lastOnDelivery` 重置为 `host_play`（可接受，因 `delivery=off` 的关状态本身持久在 settings）。
 - **Stop 与队列**：`stop()` 用 epoch 作废未开始项，已开始项 `child.kill()`；`deliverSpeech` 的 `enqueue` promise 会 reject，但已有 `.catch` 兜底，不冒泡。
+
+## 10. 新建会话 hero 屏 🔊 回落（与 dsh-voice 共存）
+
+### 10.1 背景
+
+header 的 🔊 与 🎙️ 都挂在 `conversation.session.header.actions`，但空白阶段的 hero 屏隐藏整个 header，新建会话时无从用 TTS。harness 在 hero 工作区行暴露了一个 `conversation.hero.voice` **list slot**（`scope: root`），本插件与 dsh-voice 各注册一个条目。
+
+### 10.2 与 dsh-voice 的组合关系（回落 + 注入，同 header）
+
+- **注入**：本插件把 TTS 菜单项注入 dsh-voice 声明的 root 宿主槽 `voice.hero.menu`（id `voice-tts-hero`），与「设置会话Voice」共用 hero 🎙️ 下拉。
+- **回落**：本插件再注册一个 🔊 触发器进 `conversation.hero.voice`（id `voice-tts-hero-fallback`）。`VoiceTtsHeroAction` 经 `hooks.voiceHeroMenuDeclared`（`ctx.slots.spec('voice.hero.menu') !== undefined` 的响应式快照）判断：**有 dsh-voice 时返回 null**（交给 `voice.hero.menu` 合并渲染，避免重复图标）；**无 dsh-voice 时**渲染 🔊 + 内嵌 `VoiceTtsMenu`（Set voice tts / Turn on-off / Stop host play 三项）。这与 header 的 `VoiceTtsHeaderAction` 检测 `voice.menu` 是同一套「宿主声明存在与否」逻辑。
+
+### 10.3 关闭 delivery 时停播放
+
+`Turn off voice tts`（`toggleDelivery` 的 off 分支）会同步 `playback.stop()`，清掉暂停中/播放中的 host_play 残留态——否则 delivery 已 off、新消息不再合成，而旧的暂停态仍滞留，turn-tail 的 ▶ 会去恢复「关闭前」的旧音频。
