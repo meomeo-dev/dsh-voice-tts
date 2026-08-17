@@ -1017,6 +1017,10 @@ export function apply(ctx: Context): void {
     if (scope === undefined) throw new Error('settings service is not available')
     const next = scope.get().delivery === 'off' ? lastOnDelivery : 'off'
     await scope.update({ delivery: next })
+    // 关闭交付时同步停掉当前播放:否则暂停中的 host_play 会滞留在「暂停」态,
+    // 后续 ▶ 恢复的是关闭前的旧音频,而新消息又因 delivery=off 不再生成——
+    // 三者叠加正是「暂停后新消息没声音、播放却放旧音频」的成因。
+    if (next === 'off') playback.stop()
     return next
   }
 
