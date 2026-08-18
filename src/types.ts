@@ -79,7 +79,7 @@ export type VolcengineFormat = 'mp3' | 'pcm' | 'ogg_opus' | 'wav'
 /** 句子的语言类别:`zh` 纯中文、`en` 纯英文、`mixed` 中英混写。 */
 export type SentenceLang = 'zh' | 'en' | 'mixed'
 
-/** bilingual 播报模式:`both` 全读、`english_only` 只读英文(含混合)、`chinese_only` 只读中文(含混合)。 */
+/** bilingual 播报模式:`both` 全读、`english_only` 只读纯英文、`chinese_only` 只读纯中文。 */
 export type BilingualMode = 'both' | 'english_only' | 'chinese_only'
 
 /** 一个可调合成参数的元数据(驱动 schemastery 校验、Web 面板控件与 `config --template` 文档三处)。 */

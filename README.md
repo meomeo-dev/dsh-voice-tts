@@ -32,7 +32,7 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
   - `speak [--delivery <mode>] <text>` — 合成文本并按 delivery 交付(缺省读 settings.delivery)
   - `ui` — 打印 Web 配置面板 URL
 - **Web 配置面板**(`/voice-tts`):active provider 选择 + 每 provider 一张卡片(含 KEY NAME 下拉 + 值掩码管理)+ voice_profiles 行编辑器。
-- **bilingual 双语播报**:按句切分判定 `zh`/`en`/`mixed`,按 `bilingual=both|english_only|chinese_only` 过滤(混合句永远整句读),`voices:{zh,en,mixed}` 多音色。
+- **bilingual 双语播报**:按句切分判定 `zh`/`en`/`mixed`,`both` 播报全部类别,`english_only` 仅播报纯英文句,`chinese_only` 仅播报纯中文句,`voices:{zh,en,mixed}` 多音色。
 - **per-voice 音色映射**(`voice_profiles`):软读 dsh-voice 当前口吻 id(`voice.tone`),按 id 命中整套 `voices` 覆盖,未命中回退全局 `voices`。
 - **槽位可调参数**:`voices`/`voice_profiles` 的每个语言槽位是 `{ voice_type, ...可调参数 }`,槽位未写的参数回退 provider 顶层字段(volcengine:`pitch`/`speech_rate`/`loudness_rate`;siliconflow-cn:`speed`/`gain`),用于补偿不同音色之间的响度/语速差异。
 - **turn-final 交付**:`delivery≠off` 时,监听 `session/event` 的 `turn/end`,每轮结束提取最终 assistant 文本按 delivery 交付(纯插件,不改 dsh 源码)。

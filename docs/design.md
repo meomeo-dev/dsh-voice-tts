@@ -176,7 +176,7 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`)。每个 provider �
     "speech_rate":  { "type": "number", "required": false, "default": 0,                           "description": "语速 [-50,100],100=2倍速,-50=0.5倍速" },
     "loudness_rate":{ "type": "number", "required": false, "default": 0,                           "description": "音量 [-50,100],100=2倍音量" },
     "pitch":        { "type": "number", "required": false, "default": 0,                           "description": "音调 [-12,12]" },
-    "bilingual":    { "type": "string", "required": false, "default": "both", "enum": ["both","english_only","chinese_only"], "description": "双语播报模式;混合句永远整句读" },
+    "bilingual":    { "type": "string", "required": false, "default": "both", "enum": ["both","english_only","chinese_only"], "description": "双语播报模式;both 全读,english_only 仅纯英文,chinese_only 仅纯中文,混合句仅 both 播报" },
     "voices":       { "type": "object", "required": false, "default": null,                        "description": "各语言类别槽位 { zh, en, mixed },每槽 { voice_type, pitch?, speech_rate?, loudness_rate? };缺省回退 voice_type,槽位参数缺省回退 provider 顶层字段" },
     "voice_profiles": { "type": "object", "required": false, "default": null,                      "description": "按 dsh-voice id 映射的整套 voices { <voice-id>: { zh, en, mixed } },槽位形状同 voices;命中整体覆盖 voices" }
   },
@@ -251,9 +251,9 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`)。每个 provider �
    英文句界识别对常见缩写(`Mr.` `Dr.` `e.g.` `U.S.`)与小数(`3.14`)做了抑制,避免误切。
 2. **过滤(`bilingual`)**:
    - `both` — 全读
-   - `english_only` — 读英文句 + 混合句
-   - `chinese_only` — 读中文句 + 混合句
-   - **混合句永远整句读,不做过滤**——它无法干净地归入单一语言,故默认完整阅读。
+   - `english_only` — 只读纯英文句
+   - `chinese_only` — 只读纯中文句
+   - `mixed` — 仅 `both` 模式播报;语言限定模式过滤整句
 3. **多音色(`voices`)**:每个语言类别是一个**槽位**(slot),含音色(`voice_type`)+ 可选的可调参数,缺省回退 `voice_type`:
    - 中文句 → `voices.zh`(空则 `voice_type`)
    - 英文句 → `voices.en`(空则 `voice_type`)
@@ -350,7 +350,7 @@ siliconflow 音色:CosyVoice2-0.5B 与 MOSS-TTSD-v0.5 共用同一套 8 个系�
 6. `delivery` 四态可配置且热更新:`off` 不处理;`file` 落盘;`host_play` 落盘 + 本机播放(`play_format`);`stream` 流式合成落盘。
 7. `/dsh-voice-tts list-voices volcengine` 列出音色(场景/音色名/voice_type/语言/是否支持指令)。
 8. provider 选择、普通配置走 settings,热更新生效。
-9. `/dsh-voice-tts speak <双语文本>` 按 §7 语义:切句→判定语言→`bilingual` 过滤(混合句永远读)→按 `voices` 分配音色→相邻同音色合并→拼接输出;`bilingual=english_only` 时纯中文句被跳过。
+9. `/dsh-voice-tts speak <双语文本>` 按 §7 语义:切句→判定语言→`bilingual` 过滤(`both` 全读,语言限定模式过滤非目标语言与混合句)→按 `voices` 分配音色→相邻同音色合并→拼接输出。
 10. `speak [--delivery <mode>]` 支持交付覆盖,缺省用 `settings.delivery`。
 11. `delivery≠off` 时,`turn/end` 触发:提取该 turn 最终可见 assistant 文本(跳过 tool-call-only 消息)→ 双语管线合成 → 按 delivery 交付;`delivery=off` 时不处理。
 12. `/dsh-voice-tts-key set|unset|status` 收敛到 credentials seam:`set` 写 `.credentials.yaml`、`unset` 删、`status` 只报 configured/source/writable 不回显值;`recordInput:false` 使 value 不进 session log。

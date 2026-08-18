@@ -69,7 +69,7 @@ export const OPENAI_CONFIG_TEMPLATE: ConfigTemplate = {
     },
     bilingual: {
       type: 'string', required: false, default: 'both', enum: ['both', 'english_only', 'chinese_only'],
-      description: 'bilingual 播报模式:both 全读 / english_only 只读英文(含混合) / chinese_only 只读中文(含混合);中英混写句永远整句读',
+      description: 'bilingual 播报模式:both 全读 / english_only 只读纯英文 / chinese_only 只读纯中文;中英混写句仅 both 播报',
     },
     voices: {
       type: 'object', required: false, default: null,

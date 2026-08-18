@@ -3,8 +3,8 @@
  * 规则(对齐 design.md §bilingual):
  * - 连续双语文本用 sentence-splitter 按句末符切句(同时正确处理中英文句界,
  *   选型见 docs/sentence-splitting-selection.md),每句判定 `zh`/`en`/`mixed`。
- * - `bilingual` 过滤:both 全读;english_only 读英文+混合;chinese_only 读中文+混合。
- * - 中英混写句永远整句读,不做过滤。
+ * - `bilingual` 过滤:both 全读;english_only 只读英文;chinese_only 只读中文。
+ * - 中英混写句仅在 `both` 模式保留,语言限定模式会过滤。
  * - 各语言类别可用不同音色(voices),缺省回退 voice_type。
  * @module dsh-voice-tts/bilingual
  */
@@ -69,14 +69,14 @@ export function analyzeBilingual(text: string): BilingualSentence[] {
   return segmentSentences(text).map(sentence => ({ text: sentence, lang: classifySentence(sentence) }))
 }
 
-/** 按 bilingual 模式过滤句子(混合句永远保留)。 */
+/** 按 bilingual 模式过滤句子(语言限定模式不保留混合句)。 */
 export function filterSentences(
   sentences: readonly BilingualSentence[],
   mode: BilingualMode,
 ): BilingualSentence[] {
   if (mode === 'both') return [...sentences]
   const keep = mode === 'english_only' ? 'en' : 'zh'
-  return sentences.filter(sentence => sentence.lang === 'mixed' || sentence.lang === keep)
+  return sentences.filter(sentence => sentence.lang === keep)
 }
 
 /**

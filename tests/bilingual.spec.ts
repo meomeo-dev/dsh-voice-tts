@@ -69,14 +69,21 @@ describe('filterSentences', () => {
     expect(filterSentences(sentences, 'both')).toHaveLength(3)
   })
 
-  it('keeps English + mixed in english_only', () => {
+  it('keeps only English in english_only', () => {
     const kept = filterSentences(sentences, 'english_only')
-    expect(kept.map(s => s.lang).sort()).toEqual(['en', 'mixed'])
+    expect(kept.map(s => s.lang)).toEqual(['en'])
   })
 
-  it('keeps Chinese + mixed in chinese_only', () => {
+  it('keeps only Chinese in chinese_only', () => {
     const kept = filterSentences(sentences, 'chinese_only')
-    expect(kept.map(s => s.lang).sort()).toEqual(['mixed', 'zh'])
+    expect(kept.map(s => s.lang)).toEqual(['zh'])
+  })
+
+  it('drops a newline-spanning mixed sentence in language-only modes', () => {
+    const newlineMixed = analyzeBilingual('中文内容\nEnglish content')
+    expect(newlineMixed.map(s => s.lang)).toEqual(['mixed'])
+    expect(filterSentences(newlineMixed, 'english_only')).toEqual([])
+    expect(filterSentences(newlineMixed, 'chinese_only')).toEqual([])
   })
 })
 
@@ -141,11 +148,11 @@ describe('planBilingualSpeech', () => {
     expect(plan.runs.map(r => r.count)).toEqual([2, 2, 1])
   })
 
-  it('filters by mode while always keeping mixed', () => {
+  it('filters out mixed sentences in language-only modes', () => {
     const cfg = { ...base, bilingual: 'english_only' as const }
     const plan = planBilingualSpeech('中文句。English sentence. 混合 mixed 句。', cfg)
-    expect(plan.spoken).toBe(2)
-    expect(plan.byLang).toEqual({ zh: 0, en: 1, mixed: 1 })
+    expect(plan.spoken).toBe(1)
+    expect(plan.byLang).toEqual({ zh: 0, en: 1, mixed: 0 })
   })
 
   it('returns zero runs when the filter drops everything', () => {
