@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { readBootstrap, rpc } from './api'
 import type {
-  Bootstrap, FishConfig, HostConfig, KeyStatus, MinimaxConfig, OpenaiConfig, Settings, SiliconflowConfig, Status, TunableParam, VendorRecord, Voice, VoiceInfo, Voices, VoiceSlot, VolcengineConfig,
+  Bootstrap, FishConfig, HostConfig, KeyStatus, MinimaxConfig, OpenaiConfig, Settings, SiliconflowConfig, Status, TunableParam, VendorRecord, Voice, VoiceInfo, VoicePage, Voices, VoiceSlot, VolcengineConfig,
 } from './api'
 
 const DELIVERY_OPTIONS = ['off', 'file', 'host_play', 'stream'] as const
@@ -40,6 +40,18 @@ const RESOURCE_LABEL: Record<string, string> = {
 
 const FISH_OFFICIAL_MODELS = ['s1', 's2-pro', 's2.1-pro', 's2.1-pro-free'] as const
 const FISH_302_MODELS = ['speech-1.5', 'speech-1.6', 's1'] as const
+type FishVoiceSort = 'taskCount' | 'likeCount' | 'markCount' | 'sharedCount'
+
+const FISH_SORT_LABEL: Record<FishVoiceSort, string> = {
+  taskCount: '使用次数',
+  likeCount: '点赞数',
+  markCount: '收藏数',
+  sharedCount: '分享数',
+}
+
+function fishMetric(value: number | undefined): string {
+  return value === undefined ? '-' : new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+}
 
 /** 已知凭证引用名(KEY NAME)下拉候选。 */
 const KNOWN_KEY_NAMES = ['VOLCENGINE_TTS_API_KEY', 'SILICONFLOW_API_KEY', 'TTS_302AI_API_KEY', 'TTS_FISH_AUDIO_API_KEY', 'DEEPSEEK_API_KEY'] as const
@@ -869,17 +881,26 @@ function MinimaxCard(props: {
 function FishVoiceCatalog(props: {
   open: boolean
   voices: readonly Voice[]
+  page: VoicePage
+  loading: boolean
   selectedVoiceId: string
   onClose: () => void
   onSelect: (voiceId: string) => void
+  onPageChange: (pageNumber: number) => void
 }): JSX.Element | null {
   const [query, setQuery] = useState('')
+  const [tagQuery, setTagQuery] = useState('')
+  const [language, setLanguage] = useState('')
+  const [sort, setSort] = useState<FishVoiceSort>('taskCount')
   const [copiedVoiceId, setCopiedVoiceId] = useState<string | undefined>(undefined)
   const [copyError, setCopyError] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     if (!props.open) return
     setQuery('')
+    setTagQuery('')
+    setLanguage('')
+    setSort('taskCount')
     setCopiedVoiceId(undefined)
     setCopyError(undefined)
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -894,12 +915,18 @@ function FishVoiceCatalog(props: {
     }
   }, [props.open, props.onClose])
 
+  const languages = useMemo(() => [...new Set(props.voices.flatMap(voice => voice.languages ?? []))].sort(), [props.voices])
   const options = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (q.length === 0) return props.voices
-    return props.voices.filter(voice => [voice.name, voice.voice_type, voice.scene, voice.lang, voice.ability, voice.tag ?? '']
-      .some(value => value.toLowerCase().includes(q)))
-  }, [props.voices, query])
+    const tag = tagQuery.trim().toLowerCase()
+    const filtered = props.voices.filter(voice => {
+      const searchable = [voice.name, voice.voice_type, voice.scene, voice.lang, voice.ability, ...(voice.tags ?? []), voice.tag ?? '']
+      return (q.length === 0 || searchable.some(value => value.toLowerCase().includes(q)))
+        && (tag.length === 0 || (voice.tags ?? []).some(value => value.toLowerCase().includes(tag)))
+        && (language.length === 0 || (voice.languages ?? []).includes(language))
+    })
+    return [...filtered].sort((a, b) => (b[sort] ?? -1) - (a[sort] ?? -1))
+  }, [language, props.voices, query, sort, tagQuery])
 
   const copyVoiceId = async (voiceId: string): Promise<void> => {
     if (voiceId.length === 0) return
@@ -923,18 +950,27 @@ function FishVoiceCatalog(props: {
         <div className="modal-header">
           <div>
             <div id="fish-audio-voice-catalog-title" className="voice-info-title">Fish Audio 声音模型目录</div>
-            <div className="desc">当前已加载 {props.voices.length} 条;可搜索名称、语种、场景或 voice ID。</div>
+            <div className="desc">第 {props.page.pageNumber} 页 · 当前 {props.voices.length} 条 / 共 {props.page.total} 条;可按名称、标签、语言筛选，并按使用/互动数据排序。</div>
           </div>
           <button type="button" className="modal-close" aria-label="关闭声音模型目录" onClick={props.onClose}>×</button>
         </div>
         <div className="modal-toolbar">
           <input type="search" autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索声音模型…" />
+          <input type="search" value={tagQuery} onChange={event => setTagQuery(event.target.value)} placeholder="标签筛选…" />
+          <select aria-label="语言筛选" value={language} onChange={event => setLanguage(event.target.value)}>
+            <option value="">全部语言</option>
+            {languages.map(item => <option key={item} value={item}>{item}</option>)}
+          </select>
+          <select aria-label="声音排序" value={sort} onChange={event => setSort(event.target.value as FishVoiceSort)}>
+            {Object.entries(FISH_SORT_LABEL).map(([key, label]) => <option key={key} value={key}>{label}降序</option>)}
+          </select>
           <span className="desc">显示 {options.length} / {props.voices.length}</span>
         </div>
         {copyError !== undefined && <div className="banner error">{copyError}</div>}
         <div className="voice-catalog-list" role="list">
-          {options.length === 0 && <div className="vp-empty">没有匹配的声音模型。</div>}
-          {options.map(voice => (
+          {props.loading && <div className="vp-empty">正在后台加载 Fish Audio 声音模型…</div>}
+          {!props.loading && options.length === 0 && <div className="vp-empty">没有匹配的声音模型。</div>}
+          {!props.loading && options.map(voice => (
             <div className={`voice-catalog-row${voice.voice_type === props.selectedVoiceId ? ' selected' : ''}`} role="listitem" key={voice.voice_type}>
               <div className="voice-catalog-main">
                 <div className="vp-row-head">
@@ -944,6 +980,14 @@ function FishVoiceCatalog(props: {
                 </div>
                 <div className="vp-row-sub">{voice.scene} · {voice.ability}</div>
                 <div className="vp-row-lang">{voice.lang} · <span className="mono">{voice.voice_type || '(官方默认音色)'}</span></div>
+                {(voice.tags !== undefined && voice.tags.length > 0) && <div className="voice-catalog-tags">{voice.tags.map(tag => <span key={tag}>{tag}</span>)}</div>}
+                <div className="voice-catalog-metrics">
+                  <span>使用 {fishMetric(voice.taskCount)}</span>
+                  <span>赞 {fishMetric(voice.likeCount)}</span>
+                  <span>藏 {fishMetric(voice.markCount)}</span>
+                  <span>享 {fishMetric(voice.sharedCount)}</span>
+                </div>
+                {voice.audioUrl !== undefined && <audio controls preload="none" src={voice.audioUrl} aria-label={`试听 ${voice.name}`} />}
               </div>
               <div className="voice-catalog-actions">
                 <button type="button" className="refresh" disabled={voice.voice_type.length === 0} onClick={() => void copyVoiceId(voice.voice_type)}>
@@ -955,6 +999,11 @@ function FishVoiceCatalog(props: {
               </div>
             </div>
           ))}
+        </div>
+        <div className="voice-catalog-pagination">
+          <button type="button" className="refresh" disabled={props.loading || props.page.pageNumber <= 1} onClick={() => props.onPageChange(props.page.pageNumber - 1)}>上一页</button>
+          <span className="desc">第 {props.page.pageNumber} 页</span>
+          <button type="button" className="refresh" disabled={props.loading || !props.page.hasMore} onClick={() => props.onPageChange(props.page.pageNumber + 1)}>下一页</button>
         </div>
       </section>
     </div>
@@ -970,6 +1019,9 @@ function FishCard(props: {
   params: readonly TunableParam[]
   dirty: number
   loadError?: string
+  voicesLoading: boolean
+  voicePage: VoicePage
+  onVoicePageChange: (pageNumber: number) => void
   onChange: (next: FishConfig) => void
   onSave: () => void
 }): JSX.Element {
@@ -1079,7 +1131,7 @@ function FishCard(props: {
           </details>
         </div>
       )}
-      <FishVoiceCatalog open={catalogOpen} voices={props.voices} selectedVoiceId={cfg.voice_type} onClose={closeCatalog} onSelect={selectCatalogVoice} />
+      <FishVoiceCatalog open={catalogOpen} voices={props.voices} page={props.voicePage} loading={props.voicesLoading} selectedVoiceId={cfg.voice_type} onClose={closeCatalog} onSelect={selectCatalogVoice} onPageChange={props.onVoicePageChange} />
       <div className="field-row">
         <label className="field">
           <span className="field-head"><span className="mono key">format</span><span className="desc">file/stream 格式</span></span>
@@ -1140,43 +1192,55 @@ export function App(): JSX.Element {
   const [error, setError] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [voiceErrors, setVoiceErrors] = useState<Record<string, string>>({})
+  const [providerLoading, setProviderLoading] = useState<Record<string, boolean>>(() => Object.fromEntries(PROVIDERS.map(provider => [provider, true])))
+  const [voicePages, setVoicePages] = useState<Record<string, VoicePage>>(() => Object.fromEntries(PROVIDERS.map(provider => [provider, { voices: [], total: 0, pageSize: 100, pageNumber: 1, hasMore: false }])))
+
+  const loadProviderPage = useCallback(async (provider: string, pageNumber: number): Promise<void> => {
+    if (bootstrap === undefined) return
+    setProviderLoading(prev => ({ ...prev, [provider]: true }))
+    try {
+      const result = await rpc<VoicePage & { models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider, pageNumber, pageSize: 100 })
+      setVoices(prev => ({ ...prev, [provider]: result.voices }))
+      setVoicePages(prev => ({ ...prev, [provider]: { voices: result.voices, total: result.total, pageSize: result.pageSize, pageNumber: result.pageNumber, hasMore: result.hasMore } }))
+      setModels(prev => ({ ...prev, [provider]: result.models }))
+      setParams(prev => ({ ...prev, [provider]: result.params }))
+      setVoiceErrors(prev => {
+        const next = { ...prev }
+        delete next[provider]
+        return next
+      })
+    } catch (err) {
+      setVoiceErrors(prev => ({ ...prev, [provider]: err instanceof Error ? err.message : String(err) }))
+    } finally {
+      setProviderLoading(prev => ({ ...prev, [provider]: false }))
+    }
+  }, [bootstrap])
 
   useEffect(() => {
     if (bootstrap === undefined) return
-    // 单个 provider 的远程目录失败只降级该 provider(记入 voiceErrors),不让整页加载失败。
-    const loadProvider = async (provider: string): Promise<{ voices: Voice[]; models: string[]; params: TunableParam[]; providerError?: string }> => {
-      try {
-        const result = await rpc<{ voices: Voice[]; models: string[]; params: TunableParam[] }>(bootstrap, 'voices-list', { provider })
-        return { ...result, providerError: undefined }
-      } catch (err) {
-        return { voices: [], models: [], params: [], providerError: err instanceof Error ? err.message : String(err) }
-      }
-    }
+    let cancelled = false
+    // 单个 provider 的远程目录在首屏之后后台加载,失败只降级该 provider。
     const load = async (): Promise<void> => {
       try {
-        const [c, s, v1, v2, v3, v4, v5, v6] = await Promise.all([
+        const [c, s] = await Promise.all([
           rpc<{ config: Settings }>(bootstrap, 'config-get'),
           rpc<{ status: Status }>(bootstrap, 'status-get'),
-          loadProvider('volcengine'), loadProvider('siliconflow-cn'), loadProvider('host'),
-          loadProvider('openai'), loadProvider('minimax'), loadProvider('fish-audio'),
         ])
-        const byProvider = [v1, v2, v3, v4, v5, v6]
-        const providerIds = ['volcengine', 'siliconflow-cn', 'host', 'openai', 'minimax', 'fish-audio'] as const
+        if (cancelled) return
         setConfig(c.config)
         setSaved(c.config)
         setStatus(s.status)
-        setVoices(Object.fromEntries(providerIds.map((id, i) => [id, byProvider[i]!.voices])) as Record<string, Voice[]>)
-        setModels(Object.fromEntries(providerIds.map((id, i) => [id, byProvider[i]!.models])) as Record<string, string[]>)
-        setParams(Object.fromEntries(providerIds.map((id, i) => [id, byProvider[i]!.params])) as Record<string, TunableParam[]>)
-        setVoiceErrors(Object.fromEntries(providerIds.flatMap((id, i) => byProvider[i]!.providerError === undefined ? [] : [[id, byProvider[i]!.providerError!]])))
+        setLoading(false)
+        for (const provider of PROVIDERS) void loadProviderPage(provider, 1)
       } catch (err) {
+        if (cancelled) return
         setError(err instanceof Error ? err.message : String(err))
-      } finally {
         setLoading(false)
       }
     }
     void load()
-  }, [bootstrap])
+    return () => { cancelled = true }
+  }, [bootstrap, loadProviderPage])
 
   const saveRegion = useCallback(async (region: Region): Promise<void> => {
     if (bootstrap === undefined || config === null || saved === null) return
@@ -1302,7 +1366,7 @@ export function App(): JSX.Element {
         <MinimaxCard bootstrap={bootstrap} cfg={config.providers.minimax} vendors={config.vendors} voices={voices.minimax} models={models.minimax} params={params.minimax} dirty={minimaxDirty}
           onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, minimax: next } })}
           onSave={() => void saveRegion('minimax')} />
-        <FishCard bootstrap={bootstrap} cfg={config.providers['fish-audio']} vendors={config.vendors} voices={voices['fish-audio']} params={params['fish-audio']} dirty={fishDirty} loadError={voiceErrors['fish-audio']}
+        <FishCard bootstrap={bootstrap} cfg={config.providers['fish-audio']} vendors={config.vendors} voices={voices['fish-audio']} params={params['fish-audio']} dirty={fishDirty} loadError={voiceErrors['fish-audio']} voicesLoading={providerLoading['fish-audio'] ?? false} voicePage={voicePages['fish-audio']!} onVoicePageChange={pageNumber => void loadProviderPage('fish-audio', pageNumber)}
           onChange={next => setConfig(prev => prev === null ? prev : { ...prev, providers: { ...prev.providers, 'fish-audio': next } })}
           onSave={() => void saveRegion('fish-audio')} />
         <datalist id="voice-tts-key-names">

@@ -30,7 +30,7 @@ import { FishTtsProvider } from './provider-fish.js'
 import { DEFAULT_OPENAI_MODEL, DEFAULT_OPENAI_VENDOR, DEFAULT_OPENAI_VOICE, OPENAI_MODELS, OPENAI_TUNABLE_PARAMS } from './openai.js'
 import { DEFAULT_MINIMAX_MODEL, DEFAULT_MINIMAX_VENDOR, DEFAULT_MINIMAX_VOICE, MINIMAX_MODELS, MINIMAX_TUNABLE_PARAMS } from './minimax.js'
 import { DEFAULT_FISH_302_VENDOR, DEFAULT_FISH_MODEL, DEFAULT_FISH_OFFICIAL_VENDOR, FISH_302_MODELS, FISH_OFFICIAL_MODELS, FISH_TUNABLE_PARAMS } from './fish.js'
-import type { BilingualVoiceConfig, ResolvedEndpoint, TunableParam, Vendors, VoiceSlot, VoiceTtsSettings } from './types.js'
+import type { BilingualVoiceConfig, ResolvedEndpoint, TtsVoiceListOptions, TunableParam, Vendors, VoiceSlot, VoiceTtsSettings } from './types.js'
 import { planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
 import type { TurnEventLike } from './turn-final.js'
@@ -61,7 +61,7 @@ import {
   PANEL_CHANNEL,
   PANEL_PAGE,
   panelUrl,
-  panelVoices,
+  panelVoicePage,
   queryToken,
   readPanelAsset,
   renderPanelShell,
@@ -798,9 +798,9 @@ function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: (sessionId
       status() {
         return describeStatus(deliveryView(activeScope?.get() ?? DEFAULT_SETTINGS), resolveVoiceId())
       },
-      async listVoices(providerId) {
+      async listVoices(providerId, options: TtsVoiceListOptions = {}) {
         const settings = activeScope?.get() ?? DEFAULT_SETTINGS
-        return panelVoices(tts, settings, providerId)
+        return panelVoicePage(tts, settings, providerId, options)
       },
       getVoiceInfo(providerId, voiceId) {
         const settings = activeScope?.get() ?? DEFAULT_SETTINGS

@@ -225,7 +225,7 @@ describe('handlePanelRpc', () => {
       getConfig: () => settings,
       setConfig: async () => settings,
       status: () => describeStatus(settings.providers.volcengine, undefined),
-      listVoices: () => [voice],
+      listVoices: () => ({ voices: [voice], total: 1, pageSize: 100, pageNumber: 1, hasMore: false }),
       listModels: () => ['seed-tts-2.0', 'seed-icl-2.0'],
       listParams: () => [{ key: 'pitch', label: '音调', min: -12, max: 12, step: 1 }],
       keyStatus: async () => ({ configured: true, source: 'file', writable: true }),
@@ -264,14 +264,21 @@ describe('handlePanelRpc', () => {
   })
 
   it('voices-list returns the voice catalog + models + params for a provider', async () => {
-    const listVoices = vi.fn(() => [voice])
+    const listVoices = vi.fn(() => ({ voices: [voice], total: 1, pageSize: 100, pageNumber: 1, hasMore: false }))
     const listModels = vi.fn(() => ['seed-tts-2.0', 'seed-icl-2.0'])
     const listParams = vi.fn(() => [{ key: 'pitch', label: '音调', min: -12, max: 12, step: 1 }])
     const result = await handlePanelRpc('voices-list', { acToken: TOKEN, provider: 'volcengine' }, TOKEN, deps({ listVoices, listModels, listParams }))
-    expect(listVoices).toHaveBeenCalledWith('volcengine')
+    expect(listVoices).toHaveBeenCalledWith('volcengine', { pageNumber: 1, pageSize: 100 })
     expect(listModels).toHaveBeenCalledWith('volcengine')
     expect(listParams).toHaveBeenCalledWith('volcengine')
-    expect(result).toEqual({ ok: true, value: { voices: [voice], models: ['seed-tts-2.0', 'seed-icl-2.0'], params: [{ key: 'pitch', label: '音调', min: -12, max: 12, step: 1 }] } })
+    expect(result).toEqual({ ok: true, value: { voices: [voice], total: 1, pageSize: 100, pageNumber: 1, hasMore: false, models: ['seed-tts-2.0', 'seed-icl-2.0'], params: [{ key: 'pitch', label: '音调', min: -12, max: 12, step: 1 }] } })
+  })
+
+  it('voices-list forwards an explicit page request', async () => {
+    const listVoices = vi.fn(() => ({ voices: [voice], total: 201, pageSize: 100, pageNumber: 2, hasMore: true }))
+    const result = await handlePanelRpc('voices-list', { acToken: TOKEN, provider: 'fish-audio', pageNumber: 2, pageSize: 100 }, TOKEN, deps({ listVoices }))
+    expect(listVoices).toHaveBeenCalledWith('fish-audio', { pageNumber: 2, pageSize: 100 })
+    expect(result).toMatchObject({ ok: true, value: { pageNumber: 2, total: 201, hasMore: true } })
   })
 
   it('voice-info delegates a provider detail lookup', async () => {

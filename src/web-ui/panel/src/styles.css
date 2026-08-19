@@ -576,11 +576,16 @@ button.refresh:disabled {
 
 .modal-toolbar {
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .modal-toolbar input {
   flex: 1;
   min-width: 0;
+}
+
+.modal-toolbar select {
+  min-width: 120px;
 }
 
 .voice-catalog-list {
@@ -613,6 +618,36 @@ button.refresh:disabled {
 .voice-catalog-actions {
   flex-shrink: 0;
   gap: 6px;
+}
+
+.voice-catalog-tags,
+.voice-catalog-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin-top: 7px;
+  color: var(--label-caption);
+  font-size: 12px;
+}
+
+.voice-catalog-tags span {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--hover);
+}
+
+.voice-catalog-main audio {
+  display: block;
+  width: min(420px, 100%);
+  height: 32px;
+  margin-top: 8px;
+}
+
+.voice-catalog-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
 }
 
 .catalog-use {

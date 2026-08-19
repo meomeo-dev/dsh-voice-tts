@@ -178,6 +178,16 @@ function stringArrayOf(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
+function firstSampleAudioOf(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined
+  for (const item of value) {
+    const sample = recordOf(item)
+    const audio = stringOf(sample?.audio)
+    if (audio.length > 0) return audio
+  }
+  return undefined
+}
+
 /** 把 Fish 模型实体映射为 dsh 音色摘要。 */
 export function fishVoiceOf(value: unknown): TtsVoiceInfo | undefined {
   const raw = recordOf(value)
@@ -189,6 +199,8 @@ export function fishVoiceOf(value: unknown): TtsVoiceInfo | undefined {
   const tags = stringArrayOf(raw.tags)
   const state = stringOf(raw.state)
   const trainMode = stringOf(raw.train_mode)
+  const numberOf = (key: string): number | undefined => typeof raw[key] === 'number' ? raw[key] as number : undefined
+  const audio = stringOf(raw.audio) || firstSampleAudioOf(raw.samples) || ''
   const voice: TtsVoice = {
     voice_type: id,
     name: title,
@@ -197,6 +209,13 @@ export function fishVoiceOf(value: unknown): TtsVoiceInfo | undefined {
     ability: [state, trainMode].filter(part => part.length > 0).join(' / ') || 'Fish Audio TTS',
     ...(tags.length > 0 ? { tag: tags.join(',') } : {}),
     group: 'remote',
+    ...(numberOf('like_count') !== undefined ? { likeCount: numberOf('like_count') } : {}),
+    ...(numberOf('mark_count') !== undefined ? { markCount: numberOf('mark_count') } : {}),
+    ...(numberOf('shared_count') !== undefined ? { sharedCount: numberOf('shared_count') } : {}),
+    ...(numberOf('task_count') !== undefined ? { taskCount: numberOf('task_count') } : {}),
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(languages.length > 0 ? { languages } : {}),
+    ...(audio.length > 0 ? { audioUrl: audio } : {}),
   }
   return { id, voice, metadata: raw }
 }

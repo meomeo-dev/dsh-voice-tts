@@ -136,7 +136,7 @@ export function renderPanelShell(bootstrap: PanelBootstrap): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src https:; font-src 'self'; connect-src 'self'">
 <title>dsh-voice-tts panel</title>
 <link rel="stylesheet" href="${ASSET_PREFIX}style.css${tokenQuery}">
 </head>
@@ -201,14 +201,20 @@ function fishVendorKind(settings: VoiceTtsSettings): VendorKind {
  * fish-audio 的转售 vendor(302AI)失败直接抛错(fail loud,不静默降级为空表),
  * 由面板展示错误横幅;官方 vendor 失败回退静态默认音色表。
  */
-export async function panelVoices(catalog: VoiceCatalog, settings: VoiceTtsSettings, providerId: string): Promise<TtsVoice[]> {
+export async function panelVoicePage(catalog: VoiceCatalog, settings: VoiceTtsSettings, providerId: string, options: TtsVoiceListOptions = {}): Promise<TtsVoicePage> {
   try {
-    const page = await catalog.listVoicePage(providerId, settings.providers[providerId as keyof VoiceTtsSettings['providers']] as unknown as Record<string, unknown>, { pageSize: 100 })
-    return page.voices.map(voice => ({ ...voice, primaryLang: primaryLangOf(voice.voice_type) }))
+    const page = await catalog.listVoicePage(providerId, settings.providers[providerId as keyof VoiceTtsSettings['providers']] as unknown as Record<string, unknown>, { pageSize: 100, ...options })
+    return { ...page, voices: page.voices.map(voice => ({ ...voice, primaryLang: primaryLangOf(voice.voice_type) })) }
   } catch (error) {
     if (providerId === 'fish-audio' && fishVendorKind(settings) === 'reseller') throw error
-    return catalog.listVoices(providerId).map(voice => ({ ...voice, primaryLang: primaryLangOf(voice.voice_type) }))
+    const voices = catalog.listVoices(providerId).map(voice => ({ ...voice, primaryLang: primaryLangOf(voice.voice_type) }))
+    return { voices, total: voices.length, pageSize: voices.length, pageNumber: 1, hasMore: false }
   }
+}
+
+/** 加载一页面板音色;保留旧的数组辅助函数供纯逻辑调用方使用。 */
+export async function panelVoices(catalog: VoiceCatalog, settings: VoiceTtsSettings, providerId: string): Promise<TtsVoice[]> {
+  return [...(await panelVoicePage(catalog, settings, providerId)).voices]
 }
 
 // ---- 状态预览 ----
@@ -255,7 +261,7 @@ export interface PanelDeps {
   /** 状态预览(当前 provider + 生效音色)。 */
   status(): PanelStatus
   /** 某 provider 的音色表。 */
-  listVoices(providerId: string): readonly TtsVoice[] | Promise<readonly TtsVoice[]>
+  listVoices(providerId: string, options?: TtsVoiceListOptions): TtsVoicePage | Promise<TtsVoicePage>
   /** 某 provider 的模型/资源 id 列表(面板下拉联动音色用)。 */
   listModels(providerId: string): readonly string[]
   /** 某 provider 的槽位可调参数注册表(面板动态参数控件用)。 */
@@ -279,6 +285,8 @@ interface TokenPayload {
 interface ProviderPayload {
   acToken: string
   provider: string
+  pageNumber: number
+  pageSize: number
 }
 
 /** 带 provider 与声音 id 的请求载荷(voice-info)。 */
@@ -314,6 +322,8 @@ const TOKEN_PAYLOAD: z<TokenPayload> = z.object({
 const PROVIDER_PAYLOAD: z<ProviderPayload> = z.object({
   acToken: z.string().min(1).required(),
   provider: z.string().min(1).required(),
+  pageNumber: z.number().min(1).default(1),
+  pageSize: z.number().min(1).max(100).default(100),
 })
 
 const VOICE_INFO_PAYLOAD: z<VoiceInfoPayload> = z.object({
@@ -402,7 +412,7 @@ export async function handlePanelRpc(
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')
         const parsed = parsePayload(PROVIDER_PAYLOAD, payload)
         if (!parsed.ok) return panelError('bad-request', parsed.message)
-        return { ok: true, value: { voices: await deps.listVoices(parsed.value.provider), models: deps.listModels(parsed.value.provider), params: deps.listParams(parsed.value.provider) } }
+        return { ok: true, value: { ...await deps.listVoices(parsed.value.provider, { pageNumber: parsed.value.pageNumber, pageSize: parsed.value.pageSize }), models: deps.listModels(parsed.value.provider), params: deps.listParams(parsed.value.provider) } }
       }
       case 'voice-info': {
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')

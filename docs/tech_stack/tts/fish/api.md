@@ -30,7 +30,7 @@ Fish Audio 不是只能使用参考音频的 TTS。官方 `POST /v1/tts` 在省�
 
 ## Voice Directory
 
-`GET /model` 使用 `page_size`、`page_number`、`title`、`tag`、`author_id`、`language` 和 `sort_by` 查询参数。provider 过滤 `type: tts` 项并将 `_id` 映射为 `voice_type`；完整原始模型字段通过声音详情返回，摘要只用于选择器展示。
+`GET /model` 使用 `page_size`、`page_number`、`title`、`tag`、`author_id`、`language` 和 `sort_by` 查询参数。provider 过滤 `type: tts` 项并将 `_id` 映射为 `voice_type`；列表摘要保留 `like_count`、`mark_count`、`shared_count`、`task_count`、`tags`、`languages` 和 `samples[].audio`，供面板筛选、排序、比较和试听；面板通过 `total`/`has_more` 提供分页；完整原始模型字段仍通过声音详情返回。
 
 官方内置默认音色没有可配置的 `reference_id`，面板以“Fish Audio 默认音色”展示，保存时保持 `voice_type: ""`。声音库中的模型和用户创建的克隆模型仍使用真实模型 ID。
 

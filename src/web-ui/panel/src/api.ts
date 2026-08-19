@@ -183,6 +183,22 @@ export interface Voice {
   readonly group?: string
   /** 主要语种:`zh` / `en` / 其他 ISO 代码 / `multi`(多语种),供 zh/en 槽位软提示。 */
   readonly primaryLang?: string
+  readonly likeCount?: number
+  readonly markCount?: number
+  readonly sharedCount?: number
+  readonly taskCount?: number
+  readonly tags?: readonly string[]
+  readonly languages?: readonly string[]
+  readonly audioUrl?: string
+}
+
+/** 一页面板音色及远程目录分页状态。 */
+export interface VoicePage {
+  readonly voices: Voice[]
+  readonly total: number
+  readonly pageSize: number
+  readonly pageNumber: number
+  readonly hasMore: boolean
 }
 
 /** 远程声音详情(镜像 host 侧 TtsVoiceInfo)。 */

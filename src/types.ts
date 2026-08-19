@@ -19,6 +19,20 @@ export interface TtsVoice {
   readonly tag?: string
   /** 归属表:`standard`/`multilingual` 为内置表,`remote` 为远程声音模型。 */
   readonly group: 'standard' | 'multilingual' | 'remote'
+  /** Fish Audio 模型的点赞数。 */
+  readonly likeCount?: number
+  /** Fish Audio 模型的收藏数。 */
+  readonly markCount?: number
+  /** Fish Audio 模型的分享数。 */
+  readonly sharedCount?: number
+  /** Fish Audio 模型的任务使用数。 */
+  readonly taskCount?: number
+  /** Fish Audio 模型的标签。 */
+  readonly tags?: readonly string[]
+  /** Fish Audio 模型声明支持的语言。 */
+  readonly languages?: readonly string[]
+  /** Fish Audio 模型的试听音频 URL。 */
+  readonly audioUrl?: string
 }
 
 /** 远程声音目录的分页与过滤条件。 */

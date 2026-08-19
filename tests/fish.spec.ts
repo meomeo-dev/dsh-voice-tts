@@ -147,14 +147,22 @@ describe('Fish voice directory', () => {
         total: 21,
         has_more: false,
         items: [
-          { _id: 'voice-1', type: 'tts', title: 'Alice', description: 'narration', languages: ['en'], tags: ['warm'], state: 'trained', train_mode: 'fast' },
+          {
+            _id: 'voice-1', type: 'tts', title: 'Alice', description: 'narration', languages: ['en'], tags: ['warm'],
+            like_count: 1900, mark_count: 1053, shared_count: 318, task_count: 1380063,
+            samples: [{ audio: 'https://audio.example/voice-1.mp3', text: 'hello' }], state: 'trained', train_mode: 'fast',
+          },
           { _id: 'service-1', type: 'svc', title: 'not a voice' },
         ],
       }), { status: 200 })
     }) as typeof fetch
     const page = await listFishVoices('https://api.fish.audio', 'sk-test', { pageSize: 20, pageNumber: 2 }, fetchImpl)
     expect(page).toMatchObject({ total: 21, pageSize: 20, pageNumber: 2, hasMore: false })
-    expect(page.voices).toEqual([expect.objectContaining({ voice_type: 'voice-1', name: 'Alice', lang: 'en', group: 'remote' })])
+    expect(page.voices).toEqual([expect.objectContaining({
+      voice_type: 'voice-1', name: 'Alice', lang: 'en', group: 'remote',
+      likeCount: 1900, markCount: 1053, sharedCount: 318, taskCount: 1380063,
+      tags: ['warm'], languages: ['en'], audioUrl: 'https://audio.example/voice-1.mp3',
+    })])
   })
 
   it('gets a voice detail with an encoded id and preserves raw metadata', async () => {
