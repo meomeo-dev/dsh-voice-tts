@@ -865,6 +865,102 @@ function MinimaxCard(props: {
   )
 }
 
+/** Fish Audio 声音模型目录弹窗:搜索、复制 ID 或直接填入 reference_id。 */
+function FishVoiceCatalog(props: {
+  open: boolean
+  voices: readonly Voice[]
+  selectedVoiceId: string
+  onClose: () => void
+  onSelect: (voiceId: string) => void
+}): JSX.Element | null {
+  const [query, setQuery] = useState('')
+  const [copiedVoiceId, setCopiedVoiceId] = useState<string | undefined>(undefined)
+  const [copyError, setCopyError] = useState<string | undefined>(undefined)
+
+  useEffect(() => {
+    if (!props.open) return
+    setQuery('')
+    setCopiedVoiceId(undefined)
+    setCopyError(undefined)
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') props.onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [props.open, props.onClose])
+
+  const options = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (q.length === 0) return props.voices
+    return props.voices.filter(voice => [voice.name, voice.voice_type, voice.scene, voice.lang, voice.ability, voice.tag ?? '']
+      .some(value => value.toLowerCase().includes(q)))
+  }, [props.voices, query])
+
+  const copyVoiceId = async (voiceId: string): Promise<void> => {
+    if (voiceId.length === 0) return
+    if (navigator.clipboard === undefined) {
+      setCopyError('当前浏览器不支持剪贴板 API,请手动选择并复制。')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(voiceId)
+      setCopiedVoiceId(voiceId)
+      setCopyError(undefined)
+    } catch (error) {
+      setCopyError(error instanceof Error ? error.message : '复制失败,请手动选择并复制。')
+    }
+  }
+
+  if (!props.open) return null
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={props.onClose}>
+      <section className="voice-catalog-modal" role="dialog" aria-modal="true" aria-labelledby="fish-audio-voice-catalog-title" onMouseDown={event => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <div id="fish-audio-voice-catalog-title" className="voice-info-title">Fish Audio 声音模型目录</div>
+            <div className="desc">当前已加载 {props.voices.length} 条;可搜索名称、语种、场景或 voice ID。</div>
+          </div>
+          <button type="button" className="modal-close" aria-label="关闭声音模型目录" onClick={props.onClose}>×</button>
+        </div>
+        <div className="modal-toolbar">
+          <input type="search" autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索声音模型…" />
+          <span className="desc">显示 {options.length} / {props.voices.length}</span>
+        </div>
+        {copyError !== undefined && <div className="banner error">{copyError}</div>}
+        <div className="voice-catalog-list" role="list">
+          {options.length === 0 && <div className="vp-empty">没有匹配的声音模型。</div>}
+          {options.map(voice => (
+            <div className={`voice-catalog-row${voice.voice_type === props.selectedVoiceId ? ' selected' : ''}`} role="listitem" key={voice.voice_type}>
+              <div className="voice-catalog-main">
+                <div className="vp-row-head">
+                  <span className="vp-name">{voice.name}</span>
+                  {voice.group !== undefined && <span className="vp-group">{GROUP_LABEL[voice.group] ?? voice.group}</span>}
+                  {voice.voice_type === props.selectedVoiceId && <span className="vp-check">当前</span>}
+                </div>
+                <div className="vp-row-sub">{voice.scene} · {voice.ability}</div>
+                <div className="vp-row-lang">{voice.lang} · <span className="mono">{voice.voice_type || '(官方默认音色)'}</span></div>
+              </div>
+              <div className="voice-catalog-actions">
+                <button type="button" className="refresh" disabled={voice.voice_type.length === 0} onClick={() => void copyVoiceId(voice.voice_type)}>
+                  {copiedVoiceId === voice.voice_type ? '已复制' : '复制 ID'}
+                </button>
+                <button type="button" className="refresh catalog-use" onClick={() => props.onSelect(voice.voice_type)}>
+                  {voice.voice_type.length === 0 ? '使用默认' : '使用'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 /** Fish Audio provider 卡片:官方 endpoint 与 302AI endpoint 共用一套协议参数。 */
 function FishCard(props: {
   bootstrap: Bootstrap
@@ -887,6 +983,8 @@ function FishCard(props: {
   const [voiceInfo, setVoiceInfo] = useState<VoiceInfo | undefined>(undefined)
   const [voiceInfoError, setVoiceInfoError] = useState<string | undefined>(undefined)
   const [voiceInfoLoading, setVoiceInfoLoading] = useState(false)
+  const [catalogOpen, setCatalogOpen] = useState(false)
+  const closeCatalog = useCallback((): void => setCatalogOpen(false), [])
 
   useEffect(() => {
     setVoiceInfo(undefined)
@@ -911,6 +1009,11 @@ function FishCard(props: {
     } finally {
       setVoiceInfoLoading(false)
     }
+  }
+
+  const selectCatalogVoice = (voiceId: string): void => {
+    set({ voice_type: voiceId })
+    setCatalogOpen(false)
   }
 
   const changeVendor = (next: string): void => {
@@ -956,6 +1059,7 @@ function FishCard(props: {
             <button type="button" className="refresh" disabled={voiceInfoLoading || cfg.voice_type.trim().length === 0} onClick={() => void inspectVoice()}>
               {voiceInfoLoading ? '查询中…' : '查询声音信息'}
             </button>
+            <button type="button" className="refresh" onClick={() => setCatalogOpen(true)}>打开声音目录</button>
           </div>
         </label>
       </div>
@@ -975,6 +1079,7 @@ function FishCard(props: {
           </details>
         </div>
       )}
+      <FishVoiceCatalog open={catalogOpen} voices={props.voices} selectedVoiceId={cfg.voice_type} onClose={closeCatalog} onSelect={selectCatalogVoice} />
       <div className="field-row">
         <label className="field">
           <span className="field-head"><span className="mono key">format</span><span className="desc">file/stream 格式</span></span>

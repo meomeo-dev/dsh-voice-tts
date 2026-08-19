@@ -523,6 +523,132 @@ button.refresh:disabled {
   overflow-wrap: anywhere;
 }
 
+/* Fish Audio 声音模型目录弹窗。 */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.voice-catalog-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(900px, 100%);
+  max-height: min(85vh, 760px);
+  padding: 16px;
+  border: 1px solid var(--border-l2);
+  border-radius: 10px;
+  background: var(--bg-base);
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.24);
+}
+
+.modal-header,
+.modal-toolbar,
+.voice-catalog-row,
+.voice-catalog-actions {
+  display: flex;
+  align-items: center;
+}
+
+.modal-header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-close {
+  border: none;
+  background: transparent;
+  color: var(--label-caption);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: var(--label-primary);
+}
+
+.modal-toolbar {
+  gap: 12px;
+}
+
+.modal-toolbar input {
+  flex: 1;
+  min-width: 0;
+}
+
+.voice-catalog-list {
+  min-height: 120px;
+  overflow: auto;
+  border: 1px solid var(--border-l1);
+  border-radius: 6px;
+}
+
+.voice-catalog-row {
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-l1);
+}
+
+.voice-catalog-row:last-child {
+  border-bottom: none;
+}
+
+.voice-catalog-row.selected {
+  background: var(--hover);
+}
+
+.voice-catalog-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.voice-catalog-actions {
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.catalog-use {
+  color: var(--business-primary);
+}
+
+@media (max-width: 640px) {
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .voice-catalog-modal {
+    max-height: 92vh;
+    border-radius: 10px 10px 0 0;
+  }
+
+  .modal-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .voice-catalog-row {
+    flex-direction: column;
+  }
+
+  .voice-catalog-actions {
+    width: 100%;
+  }
+
+  .voice-catalog-actions button {
+    flex: 1;
+  }
+}
+
 /* 凭证(KEY NAME + 值)管理区 */
 .credential {
   display: flex;
