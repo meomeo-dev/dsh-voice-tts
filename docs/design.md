@@ -26,19 +26,19 @@
 
 ```
 dsh-tts          (Service Definition —— TTS registry,ctx.tts)
-volcengine-tts   (Provider —— 调 volcengine TTS API)
+tts providers    (Provider —— volcengine / siliconflow / OpenAI / MiniMax / Fish Audio)
 dsh-tts-player   (Consumer —— 自动播放 / 手动播放按钮 / 命令)
 ```
 
 - **Service Definition(`dsh-tts`)**:定义 `ctx.tts` 服务、`TtsRequest`/`TtsResult` 词汇类型、provider 注册接口、音色列表查询接口。
-- **Provider(`volcengine-tts`)**:实现 volcengine 的合成;换 provider(阿里云/微软)只换这个包。
+- **Provider**:每个 provider 实现自己的合成协议与音色目录;当前包含 volcengine、siliconflow、OpenAI、MiniMax 和 Fish Audio。
 - **Consumer**:前端播放(自动/手动)+ `/dsh-voice-tts` 命令 + 可能的 model tool。
 
-**打包决策(定稿):首版合包。** 三个角色放在同一个 bundle `@meomeo-dev/dsh-voice-tts` 内按目录分层(`service/`、`provider/volcengine/`、`player/`),而非拆 3 个 npm 包。理由:
+**打包决策(定稿):合包。** 三个角色放在同一个 bundle `@meomeo-dev/dsh-voice-tts` 内按目录分层(`service/`、`provider/`、`player/`),而非拆 3 个 npm 包。理由:
 
-- 首版仅一个 provider,三个角色无独立演进节奏;
+- provider 与 Consumer 共享同一 TTS service contract,暂无独立发布需求;
 - 包数少、安装心智简单;
-- 若日后 Player 或某 Provider 需独立迭代(如新前端 seam、多 provider),再按 capability seam 拆分,拆包是机械操作、不破坏 seam 三角色结构。
+- 若日后 Player 或某 Provider 需独立发布,再按 capability seam 拆分,拆包是机械操作、不破坏 seam 三角色结构。
 
 ## 3. 配置分层:settings 与 credentials 严格分离
 
@@ -332,7 +332,7 @@ siliconflow 音色:CosyVoice2-0.5B 与 MOSS-TTSD-v0.5 共用同一套 8 个系�
 ## 11. 非目标(首版)
 
 - 不做流式 TTS / 实时字幕对齐。
-- 多 provider 已支持(volcengine + siliconflow-cn);不承诺任意 provider 类型(新增 provider 需各加 config schema + provider 实现 + 音色表)。
+- 多 provider 已支持(volcengine / siliconflow-cn / openai / minimax / fish-audio);新增 provider 需各加 config schema、provider 实现与音色目录适配。
 - 不做语音识别(ASR),只做 TTS。
 - 不做声音复刻(`seed-icl-2.0`)与多情感(`mars/moon/wvae`)音色。
 - 不做 `additions` 进阶参数(silence/markdown/emoji/dialect)、`context_texts` 语音指令、`section_id`、`tone_fidelity`、字幕、缓存。
@@ -357,3 +357,4 @@ siliconflow 音色:CosyVoice2-0.5B 与 MOSS-TTSD-v0.5 共用同一套 8 个系�
 13. `voice_profiles` 按 dsh-voice id 映射:软读 `voice.tone` 命中 profile 则整体替换 `voices`,未命中回退全局 `voices`;无 dsh-voice 时映射自动跳过。
 14. 槽位可调参数:某语言槽位配置了 `loudness_rate` 等参数时,该槽位的合成请求携带该覆盖值;未配置时回退 provider 顶层对应字段;相邻「同音色但不同参数」的句子拆为多次 API 调用(不合并)。
 15. 参数注册表随 provider 生效:`config --template` 的 `voices`/`voice_profiles` 描述与 Web 面板动态参数控件均来自同一 `TUNABLE_PARAMS`(volcengine 3 个、siliconflow-cn 2 个),不硬编码在面板组件里。
+16. Fish Audio 官方与 302AI vendor 均支持二进制 TTS、分页声音列表和声音详情;官方空 `voice_type` 使用内置默认音色,302AI 使用声音模型 ID。

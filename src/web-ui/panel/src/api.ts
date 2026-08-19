@@ -92,7 +92,8 @@ export interface HostConfig extends BilingualFields {
 /** 一个 vendor(镜像 host 侧 VendorRecord)。 */
 export interface VendorRecord {
   label: string
-  provider: 'openai' | 'minimax'
+  provider: 'openai' | 'minimax' | 'fish-audio'
+  kind: 'official' | 'reseller'
   baseUrl: string
   apiKeyRef: string
 }
@@ -122,6 +123,30 @@ export interface MinimaxConfig extends BilingualFields {
   channel: 1 | 2
 }
 
+/** Fish Audio provider 配置(镜像 host 侧 FishConfig)。 */
+export interface FishConfig extends BilingualFields {
+  vendor: string
+  model: string
+  format: 'mp3' | 'wav' | 'pcm' | 'opus'
+  play_format: 'mp3' | 'wav' | 'pcm' | 'opus'
+  sample_rate: number
+  mp3_bitrate: 64 | 128 | 192
+  opus_bitrate: -1000 | 24000 | 32000 | 48000 | 64000
+  speed: number
+  volume: number
+  normalize: boolean
+  normalize_loudness: boolean
+  latency: 'low' | 'normal' | 'balanced'
+  chunk_length: number
+  temperature: number
+  top_p: number
+  max_new_tokens: number
+  repetition_penalty: number
+  min_chunk_length: number
+  condition_on_previous_chunks: boolean
+  early_stop_threshold: number
+}
+
 /** voice-tts 设置(镜像 host 侧 VoiceTtsSettings)。 */
 export interface Settings {
   delivery: 'off' | 'file' | 'host_play' | 'stream'
@@ -135,6 +160,7 @@ export interface Settings {
     host: HostConfig
     openai: OpenaiConfig
     minimax: MinimaxConfig
+    'fish-audio': FishConfig
   }
 }
 

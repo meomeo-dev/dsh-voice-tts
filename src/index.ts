@@ -26,8 +26,10 @@ import { DEFAULT_SILICONFLOW_API_KEY_REF, DEFAULT_SILICONFLOW_MODEL, DEFAULT_SIL
 import { DEFAULT_HOST_COMMAND, DEFAULT_HOST_RATE, HOST_OUTPUT_FORMAT } from './host.js'
 import { OpenaiTtsProvider } from './provider-openai.js'
 import { MinimaxTtsProvider } from './provider-minimax.js'
+import { FishTtsProvider } from './provider-fish.js'
 import { DEFAULT_OPENAI_MODEL, DEFAULT_OPENAI_VENDOR, DEFAULT_OPENAI_VOICE, OPENAI_MODELS, OPENAI_TUNABLE_PARAMS } from './openai.js'
 import { DEFAULT_MINIMAX_MODEL, DEFAULT_MINIMAX_VENDOR, DEFAULT_MINIMAX_VOICE, MINIMAX_MODELS, MINIMAX_TUNABLE_PARAMS } from './minimax.js'
+import { DEFAULT_FISH_302_VENDOR, DEFAULT_FISH_MODEL, DEFAULT_FISH_OFFICIAL_VENDOR, FISH_302_MODELS, FISH_OFFICIAL_MODELS, FISH_TUNABLE_PARAMS } from './fish.js'
 import type { BilingualVoiceConfig, ResolvedEndpoint, TunableParam, Vendors, VoiceSlot, VoiceTtsSettings } from './types.js'
 import { planBilingualSpeech } from './bilingual.js'
 import { finalAssistantText } from './turn-final.js'
@@ -59,7 +61,7 @@ import {
   PANEL_CHANNEL,
   PANEL_PAGE,
   panelUrl,
-  primaryLangOf,
+  panelVoices,
   queryToken,
   readPanelAsset,
   renderPanelShell,
@@ -102,7 +104,8 @@ const BILINGUAL_SCHEMA = z.union(['both', 'english_only', 'chinese_only'] as con
 /** 一个 vendor 的 schema(密钥只存引用名,真值在 credentials)。 */
 const VENDOR_SCHEMA = z.object({
   label: z.string(),
-  provider: z.union(['openai', 'minimax'] as const),
+  provider: z.union(['openai', 'minimax', 'fish-audio'] as const),
+  kind: z.union(['official', 'reseller'] as const),
   baseUrl: z.string(),
   apiKeyRef: z.string(),
 })
@@ -112,8 +115,10 @@ const TTS_302AI_API_KEY_REF = 'TTS_302AI_API_KEY'
 
 /** 默认 vendor 注册表:302AI 同时服务 openai 与 minimax,各占一条(不同 baseUrl)。 */
 const DEFAULT_VENDORS: Vendors = {
-  [DEFAULT_OPENAI_VENDOR]: { label: '302AI', provider: 'openai', baseUrl: 'https://api.302.ai/v1', apiKeyRef: TTS_302AI_API_KEY_REF },
-  [DEFAULT_MINIMAX_VENDOR]: { label: '302AI', provider: 'minimax', baseUrl: 'https://api.302.ai/minimaxi/v1', apiKeyRef: TTS_302AI_API_KEY_REF },
+  [DEFAULT_OPENAI_VENDOR]: { label: '302AI', provider: 'openai', kind: 'reseller', baseUrl: 'https://api.302.ai/v1', apiKeyRef: TTS_302AI_API_KEY_REF },
+  [DEFAULT_MINIMAX_VENDOR]: { label: '302AI', provider: 'minimax', kind: 'reseller', baseUrl: 'https://api.302.ai/minimaxi/v1', apiKeyRef: TTS_302AI_API_KEY_REF },
+  [DEFAULT_FISH_OFFICIAL_VENDOR]: { label: 'Fish Audio 官方', provider: 'fish-audio', kind: 'official', baseUrl: 'https://api.fish.audio', apiKeyRef: 'TTS_FISH_AUDIO_API_KEY' },
+  [DEFAULT_FISH_302_VENDOR]: { label: '302AI Fish Audio', provider: 'fish-audio', kind: 'reseller', baseUrl: 'https://api.302.ai/fish-audio', apiKeyRef: TTS_302AI_API_KEY_REF },
 }
 
 /** 该命名空间的 schema:多 provider,每个 provider 有自己的 apiKeyRef + 合成参数。 */
@@ -194,6 +199,32 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       voices: voicesSchema(MINIMAX_TUNABLE_PARAMS),
       voice_profiles: voiceProfilesSchema(MINIMAX_TUNABLE_PARAMS),
     }),
+    'fish-audio': z.object({
+      vendor: z.string().default(DEFAULT_FISH_OFFICIAL_VENDOR),
+      model: z.string().default(DEFAULT_FISH_MODEL),
+      voice_type: z.string().default(''),
+      format: z.union(['mp3', 'wav', 'pcm', 'opus'] as const).default('mp3'),
+      play_format: z.union(['mp3', 'wav', 'pcm', 'opus'] as const).default('wav'),
+      sample_rate: z.number().step(1).min(8000).max(48000).default(44100),
+      mp3_bitrate: z.union([64, 128, 192] as const).default(128),
+      opus_bitrate: z.union([-1000, 24000, 32000, 48000, 64000] as const).default(-1000),
+      speed: z.number().step(0.05).min(0.5).max(2).default(1),
+      volume: z.number().step(0.1).default(0),
+      normalize: z.boolean().default(true),
+      normalize_loudness: z.boolean().default(true),
+      latency: z.union(['low', 'normal', 'balanced'] as const).default('normal'),
+      chunk_length: z.number().step(1).min(100).max(300).default(200),
+      temperature: z.number().step(0.05).min(0).max(1).default(0.7),
+      top_p: z.number().step(0.05).min(0).max(1).default(0.7),
+      max_new_tokens: z.number().step(1).min(1).default(1024),
+      repetition_penalty: z.number().step(0.05).min(0).default(1.2),
+      min_chunk_length: z.number().step(1).min(0).max(100).default(50),
+      condition_on_previous_chunks: z.boolean().default(true),
+      early_stop_threshold: z.number().step(0.05).min(0).max(1).default(1),
+      bilingual: BILINGUAL_SCHEMA,
+      voices: voicesSchema(FISH_TUNABLE_PARAMS),
+      voice_profiles: voiceProfilesSchema(FISH_TUNABLE_PARAMS),
+    }),
   }),
 })
 
@@ -270,6 +301,32 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       voices: {},
       voice_profiles: {},
     },
+    'fish-audio': {
+      vendor: DEFAULT_FISH_OFFICIAL_VENDOR,
+      model: DEFAULT_FISH_MODEL,
+      voice_type: '',
+      format: 'mp3',
+      play_format: 'wav',
+      sample_rate: 44100,
+      mp3_bitrate: 128,
+      opus_bitrate: -1000,
+      speed: 1,
+      volume: 0,
+      normalize: true,
+      normalize_loudness: true,
+      latency: 'normal',
+      chunk_length: 200,
+      temperature: 0.7,
+      top_p: 0.7,
+      max_new_tokens: 1024,
+      repetition_penalty: 1.2,
+      min_chunk_length: 50,
+      condition_on_previous_chunks: true,
+      early_stop_threshold: 1,
+      bilingual: 'both',
+      voices: {},
+      voice_profiles: {},
+    },
   },
 }
 
@@ -331,6 +388,10 @@ function deliveryView(settings: VoiceTtsSettings): DeliveryView {
     const m = settings.providers.minimax
     return { bilingual: m.bilingual, voice_type: m.voice_type, voices: m.voices, voice_profiles: m.voice_profiles, format: m.format, play_format: m.play_format }
   }
+  if (provider === 'fish-audio') {
+    const f = settings.providers['fish-audio']
+    return { bilingual: f.bilingual, voice_type: f.voice_type, voices: f.voices, voice_profiles: f.voice_profiles, format: f.format, play_format: f.play_format }
+  }
   if (provider === 'host') {
     const h = settings.providers.host
     return { bilingual: h.bilingual, voice_type: h.voice_type, voices: h.voices, voice_profiles: h.voice_profiles, format: HOST_OUTPUT_FORMAT, play_format: HOST_OUTPUT_FORMAT }
@@ -361,10 +422,24 @@ function synthConfig(settings: VoiceTtsSettings, voice: string, format: string, 
   if (provider === 'minimax') {
     return { ...settings.providers.minimax, voice_type: voice, format, ...params }
   }
+  if (provider === 'fish-audio') {
+    return { ...settings.providers['fish-audio'], voice_type: voice, format, ...params }
+  }
   if (provider === 'host') {
     return { ...settings.providers.host, voice_type: voice, format, ...params }
   }
   throw new Error(`unknown TTS provider "${provider}"`)
+}
+
+/** 取得指定 provider 的当前配置,供声音目录查询复用 vendor 与凭据引用。 */
+function providerConfigOf(settings: VoiceTtsSettings, providerId: string): Record<string, unknown> {
+  if (providerId === 'volcengine') return { ...settings.providers.volcengine }
+  if (providerId === 'siliconflow-cn') return { ...settings.providers['siliconflow-cn'] }
+  if (providerId === 'host') return { ...settings.providers.host }
+  if (providerId === 'openai') return { ...settings.providers.openai }
+  if (providerId === 'minimax') return { ...settings.providers.minimax }
+  if (providerId === 'fish-audio') return { ...settings.providers['fish-audio'] }
+  throw new Error(`unknown TTS provider "${providerId}"`)
 }
 
 /**
@@ -571,11 +646,28 @@ async function executeTtsCommand(
       await scope.update({ provider: command.provider })
       return { kind: 'success', text: renderStatus(scope.get(), tts.listProviders()) }
     }
-    case 'list-voices':
-      return {
-        kind: 'success',
-        text: listVoicesText(filterVoices(tts.listVoices(command.provider), command.query), command.provider),
+    case 'list-voices': {
+      try {
+        const page = await tts.listVoicePage(command.provider, providerConfigOf(scope.get(), command.provider), { pageSize: 100 })
+        return {
+          kind: 'success',
+          text: listVoicesText(filterVoices(page.voices, command.query), command.provider),
+        }
+      } catch (error) {
+        return { kind: 'error', text: `voice list failed: ${describeError(error)}` }
       }
+    }
+    case 'voice-info': {
+      if (!tts.listProviders().includes(command.provider)) {
+        return { kind: 'error', text: `unknown provider "${command.provider}". Available: ${tts.listProviders().join(', ')}` }
+      }
+      try {
+        const info = await tts.getVoiceInfo(command.provider, providerConfigOf(scope.get(), command.provider), command.voiceId)
+        return { kind: 'success', text: JSON.stringify(info.metadata, null, 2) }
+      } catch (error) {
+        return { kind: 'error', text: `voice info failed: ${describeError(error)}` }
+      }
+    }
     case 'config-template':
       if (!tts.listProviders().includes(command.provider)) {
         return { kind: 'error', text: `unknown provider "${command.provider}". Available: ${tts.listProviders().join(', ')}` }
@@ -706,14 +798,24 @@ function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: (sessionId
       status() {
         return describeStatus(deliveryView(activeScope?.get() ?? DEFAULT_SETTINGS), resolveVoiceId())
       },
-      listVoices(providerId) {
-        return tts.listVoices(providerId).map(voice => ({ ...voice, primaryLang: primaryLangOf(voice.voice_type) }))
+      async listVoices(providerId) {
+        const settings = activeScope?.get() ?? DEFAULT_SETTINGS
+        return panelVoices(tts, settings, providerId)
+      },
+      getVoiceInfo(providerId, voiceId) {
+        const settings = activeScope?.get() ?? DEFAULT_SETTINGS
+        return tts.getVoiceInfo(providerId, providerConfigOf(settings, providerId), voiceId)
       },
       listModels(providerId) {
         if (providerId === 'volcengine') return VOLCENGINE_RESOURCE_IDS
         if (providerId === 'siliconflow-cn') return SILICONFLOW_MODELS
         if (providerId === 'openai') return OPENAI_MODELS
         if (providerId === 'minimax') return MINIMAX_MODELS
+        if (providerId === 'fish-audio') {
+          const settings = activeScope?.get() ?? DEFAULT_SETTINGS
+          const vendor = settings.vendors[settings.providers['fish-audio'].vendor]
+          return vendor?.kind === 'reseller' ? FISH_302_MODELS : FISH_OFFICIAL_MODELS
+        }
         return []
       },
       listParams(providerId) {
@@ -721,6 +823,7 @@ function registerPanel(ctx: Context, tts: TtsService, resolveVoiceId: (sessionId
         if (providerId === 'siliconflow-cn') return SILICONFLOW_TUNABLE_PARAMS
         if (providerId === 'openai') return OPENAI_TUNABLE_PARAMS
         if (providerId === 'minimax') return MINIMAX_TUNABLE_PARAMS
+        if (providerId === 'fish-audio') return FISH_TUNABLE_PARAMS
         return []
       },
       async keyStatus(ref) {
@@ -790,6 +893,12 @@ export function apply(ctx: Context): void {
       if (vendor === undefined) throw new Error(`unknown vendor "${vendorId}" referenced by ${providerId} (check settings.vendors)`)
       return vendor.apiKeyRef
     }
+    if (providerId === 'fish-audio') {
+      const vendorId = activeSettings.providers['fish-audio'].vendor
+      const vendor = activeSettings.vendors[vendorId]
+      if (vendor === undefined) throw new Error(`unknown vendor "${vendorId}" referenced by fish-audio (check settings.vendors)`)
+      return vendor.apiKeyRef
+    }
     if (providerId === 'host') throw new Error('the host provider has no API key (local command-line synthesis)')
     throw new Error(`unknown TTS provider "${providerId}"`)
   }
@@ -830,7 +939,7 @@ export function apply(ctx: Context): void {
     if (apiKey === undefined) {
       throw new Error(`missing API key for ${providerId} (vendor "${vendorId}"): store ${vendor.apiKeyRef} through the credentials service (dsh credentials) or export it in the environment`)
     }
-    return { baseUrl: vendor.baseUrl, apiKey }
+    return { baseUrl: vendor.baseUrl, apiKey, kind: vendor.kind ?? 'official' }
   }
 
   // 把 key 命令的目标解析为 KEY NAME + 展示标签。目标可以是 provider id(volcengine/
@@ -851,6 +960,7 @@ export function apply(ctx: Context): void {
   ctx.effect(() => tts.registerProvider(new HostTtsProvider()), 'host provider')
   ctx.effect(() => tts.registerProvider(new OpenaiTtsProvider(vendorId => resolveEndpointFor('openai', vendorId))), 'openai provider')
   ctx.effect(() => tts.registerProvider(new MinimaxTtsProvider(vendorId => resolveEndpointFor('minimax', vendorId))), 'minimax provider')
+  ctx.effect(() => tts.registerProvider(new FishTtsProvider(vendorId => resolveEndpointFor('fish-audio', vendorId))), 'fish-audio provider')
 
   // 单一播放权威:host_play 与浏览器 <audio> 的统一状态机(设计 §4)。后端工厂按
   // settings.player.command 探测 ffplay → afplay(可暂停/可 seek 的 ffplay 优先)。

@@ -5,7 +5,7 @@
 
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
-import type { TtsChunk, TtsProvider, TtsRequest, TtsResult, TtsVoice } from './types.js'
+import type { TtsChunk, TtsProvider, TtsRequest, TtsResult, TtsVoice, TtsVoiceInfo, TtsVoiceListOptions, TtsVoicePage } from './types.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -66,6 +66,23 @@ export class TtsService extends Service {
   /** 列出某 provider 的音色;未知 provider 返回空表。 */
   listVoices(providerId: string): readonly TtsVoice[] {
     return this.providers.get(providerId)?.listVoices() ?? []
+  }
+
+  /** 列出某 provider 的一页远程音色;静态 provider 返回其完整静态目录。 */
+  listVoicePage(providerId: string, config: Record<string, unknown>, options?: TtsVoiceListOptions): Promise<TtsVoicePage> {
+    const provider = this.providers.get(providerId)
+    if (provider === undefined) return Promise.reject(new Error(`unknown TTS provider "${providerId}"`))
+    if (provider.listVoicePage !== undefined) return provider.listVoicePage(config, options)
+    const voices = provider.listVoices()
+    return Promise.resolve({ voices, total: voices.length, pageSize: voices.length, pageNumber: 1, hasMore: false })
+  }
+
+  /** 获取某 provider 的远程音色详情;未实现时拒绝。 */
+  getVoiceInfo(providerId: string, config: Record<string, unknown>, voiceId: string): Promise<TtsVoiceInfo> {
+    const provider = this.providers.get(providerId)
+    if (provider === undefined) return Promise.reject(new Error(`unknown TTS provider "${providerId}"`))
+    if (provider.getVoiceInfo === undefined) return Promise.reject(new Error(`TTS provider "${providerId}" does not support voice info`))
+    return provider.getVoiceInfo(config, voiceId)
   }
 
   /**

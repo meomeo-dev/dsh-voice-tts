@@ -1,8 +1,8 @@
-# 设计：provider–vendor–credential–params 数据模型与 OpenAI / MiniMax provider 接入
+# 设计：provider–vendor–credential–params 数据模型与 OpenAI / MiniMax / Fish Audio provider 接入
 
 > 状态：设计（实现前定稿）。背景调研见 `docs/tts-openai-minimax-integration.md`，
 > 选型见 `docs/tts-provider-comparison.md`。本文定义「一个协议 provider 可接多个 vendor
-> （不同 base_url + 不同折扣 api_key）」的数据模型，并据此落地 OpenAI 与 MiniMax 两个 provider。
+> （不同 base_url + 不同折扣 api_key）」的数据模型，并据此落地 OpenAI、MiniMax 与 Fish Audio provider。
 
 ## 1. 用户故事（user stories）
 
@@ -17,8 +17,8 @@
 - **US4 抗手动改配置**：用户手改 settings 里某个 vendor 缺 `baseUrl`、或 `apiKeyRef` 指向
   一个不存在的密钥、或 `vendor` 指向不存在的 vendor id，插件**不崩**，只在合成时对该次调用
   报可读错误（misconfiguration fails loud at resolve point，不静默回退到另一个 vendor）。
-- **US5 音色目录独立**：OpenAI 有固定 13 个音色枚举；MiniMax 音色是开放 id，目录可扩展。
-  两者 `listVoices()` 独立、互不污染。
+- **US5 音色目录独立**：OpenAI 有固定音色枚举；MiniMax 与 Fish Audio 使用开放 id，目录可扩展。
+  各 provider 的 `listVoices()` 或远程目录独立、互不污染。
 
 ## 2. 数据模型
 
@@ -31,7 +31,7 @@ Provider（协议，代码，非用户数据）
   └── 1 : N ── Voice（该协议的音色目录 TtsVoice[]）
 
 Vendor（用户配置）
-  ├── provider：属于哪个协议（openai / minimax）
+  ├── provider：属于哪个协议（openai / minimax / fish-audio）
   ├── baseUrl：endpoint 前缀（明文，settings）
   └── apiKeyRef：密钥引用名（KEY NAME，真值在 credentials，不进 settings）
 
@@ -60,13 +60,14 @@ base_url）。新模型把「endpoint + key」抽成**独立的 `vendors` 注册
 ```ts
 vendors: z.record(z.object({
   label: z.string(),                                  // 展示名
-  provider: z.union(['openai', 'minimax'] as const),  // 所属协议
+  provider: z.union(['openai', 'minimax', 'fish-audio'] as const),  // 所属协议
+  kind: z.union(['official', 'reseller'] as const),   // 协议行为：官方全字段 / 转售(302AI)兼容子集
   baseUrl: z.string(),                                 // 明文 endpoint 前缀
   apiKeyRef: z.string(),                              // 密钥引用名（KEY NAME）
 })).default({})
 ```
 
-### 3.2 新增两个 provider config
+### 3.2 新增协议 provider config
 
 ```ts
 providers: {
@@ -100,10 +101,20 @@ providers: {
     voices: voicesSchema(MINIMAX_TUNABLE_PARAMS),
     voice_profiles: voiceProfilesSchema(MINIMAX_TUNABLE_PARAMS),
   }),
+  'fish-audio': z.object({
+    vendor: z.string().default('fish-audio-official'),
+    model: z.string().default('s2.1-pro'),
+    voice_type: z.string().default(''),
+    format: z.union(['mp3','wav','pcm','opus'] as const).default('mp3'),
+    play_format: z.union(['mp3','wav','pcm','opus'] as const).default('wav'),
+    speed: z.number().min(0.5).max(2).default(1),
+    volume: z.number().default(0),
+    // 其余 Fish TTS 字段见 fish config template 与技术文档。
+  }),
 }
 ```
 
-> 字段说明：OpenAI/MiniMax 的默认音色统一收敛到共享 `BilingualVoiceConfig.voice_type`（与
+> 字段说明：OpenAI/MiniMax/Fish Audio 的默认音色统一收敛到共享 `BilingualVoiceConfig.voice_type`（与
 > siliconflow 一致），协议层再把它映射到 API 的 `voice`（OpenAI）/ `voice_id`（MiniMax）。
 > 故 schema 里用 `voice_type`，而非 §3.2 早期草稿的 `voice`/`voice_id`。
 
@@ -112,13 +123,15 @@ providers: {
 ```
 settings.provider（协议，如 'openai'）
   → settings.providers.openai.vendor（vendorId）
-  → settings.vendors[vendorId]（{ baseUrl, apiKeyRef }）
+  → settings.vendors[vendorId]（{ baseUrl, apiKeyRef, kind }）
   → ctx.credentials.resolve(credentialRef(apiKeyRef))（api_key 真值）
   → provider.synthesize({ text, baseUrl, apiKey, ...params })
 ```
 
-`provider` 实现从 `resolveApiKey()` 改为 `resolveEndpoint()`：一次解析返回 `{ baseUrl, apiKey }`，
-缺 vendor / 缺 key / vendor 不存在时**当场抛可读错误**（US4）。
+`provider` 实现从 `resolveApiKey()` 改为 `resolveEndpoint()`：一次解析返回 `{ baseUrl, apiKey, kind }`，
+缺 vendor / 缺 key / vendor 不存在时**当场抛可读错误**（US4）。`kind`（`official` / `reseller`）
+是 vendor 的**协议行为判别**（旧 settings 缺省视为 `official`），协议层据此决定字段全集还是
+兼容子集——**不靠 baseUrl 字符串嗅探**，避免尾斜杠/镜像 URL 翻转行为。
 
 ## 4. Provider 实现（协议层）
 
@@ -131,7 +144,10 @@ settings.provider（协议，如 'openai'）
   audio_setting }`；非流式与流式 `data.audio` 均为 **hex**，统一 hex→bytes。`listVoices()`
   返回 `src/minimax-voices.ts` 的 `MINIMAX_SPEECH_02_TURBO_VOICES`（完整 332 个系统音色；
   `MINIMAX_SPEECH_02_HD_VOICES` 同源）。
-- 二者 `configTemplate` 暴露 §3.2 的参数与 vendor 字段，`/dsh-voice-tts config --template` 与面板共享同一份 `TunableParam` 元数据。
+- `FishTtsProvider`：官方走 `{baseUrl}/v1/tts`，302AI（`kind: reseller`）走相同相对路径并追加
+  `response_format=data` 且只发送兼容字段子集、要求 `reference_id`；`/model` 与 `/model/{id}`
+  通过异步声音目录能力提供分页和详情。
+- 三个协议 provider 的 `configTemplate` 暴露各自参数与 vendor 字段，`/dsh-voice-tts config --template` 与面板共享同一份 `TunableParam` 元数据。
 
 > 音色常量命名规范：`<PROVIDER>_<MODEL>_VOICES`（如 `OPENAI_GPT_4O_MINI_TTS_VOICES`、
 > `MINIMAX_SPEECH_02_TURBO_VOICES`），文件命名 `<provider>-voices.ts`，与现有
@@ -142,40 +158,43 @@ settings.provider（协议，如 'openai'）
 
 - `apiKeyRef` 仍是 KEY NAME，复用 `/dsh-voice-tts-key set|unset|status`。该命令的目标
   （`target`）可以是 **provider id 或 vendor id**：provider id（volcengine/siliconflow-cn 直接
-  取 provider 的 `apiKeyRef`；openai/minimax 取「当前 vendor」的 `apiKeyRef`）；vendor id 直接
+  取 provider 的 `apiKeyRef`；openai/minimax/fish-audio 取「当前 vendor」的 `apiKeyRef`）；vendor id 直接
   取该 vendor 的 `apiKeyRef`，**不切换当前 vendor**。解析逻辑见 `index.ts` 的 `keyTargetOf`。
-- `baseUrl` 是明文，直接写 settings；面板 vendor 区提供 `id/label/provider/baseUrl/apiKeyRef`
+- `baseUrl` 是明文，直接写 settings；面板 vendor 区提供 `id/label/provider/kind/baseUrl/apiKeyRef`
   的增删改编辑（见 §6 改造面的 `src/web-ui/panel/*`）。
 
 ## 6. 改造面（文件清单）
 
 | 文件 | 动作 |
 |---|---|
-| `src/types.ts` | 新增 `VendorRecord`、`OpenaiConfig`、`MinimaxConfig`；`VoiceTtsSettings` 增 `vendors` + `providers.openai/minimax` |
+| `src/types.ts` | 新增 `VendorRecord`、`OpenaiConfig`、`MinimaxConfig`、`FishConfig`；`VoiceTtsSettings` 增 `vendors` + provider 配置 |
 | `src/openai.ts` | 新增：OpenAI 协议纯逻辑（请求构造/响应解析/流式/配置模板） |
 | `src/minimax.ts` | 新增：MiniMax 协议纯逻辑（同 OpenAI，含 hex 解码） |
+| `src/fish.ts` | 新增：Fish Audio 官方/302AI 协议、二进制流、声音目录与详情 |
 | `src/openai-voices.ts` | 新增：`OPENAI_GPT_4O_MINI_TTS_VOICES` / `OPENAI_TTS_1_VOICES`（13 / 9 音色） |
 | `src/minimax-voices.ts` | 新增：`MINIMAX_SPEECH_02_TURBO_VOICES` / `MINIMAX_SPEECH_02_HD_VOICES`（seed） |
 | `src/provider-openai.ts` / `provider-minimax.ts` | 新增：`TtsProvider` 实现，注入 `resolveEndpoint()` |
-| `src/index.ts` | 注册两个 provider；`resolveEndpoint(vendorId)`；`keyTargetOf`（provider/vendor → KEY NAME）；SCHEMA/DEFAULT_SETTINGS 增 vendors + 两 provider |
-| `src/command.ts` | `renderConfigTemplate`/`renderStatus` 支持 openai/minimax + vendor；`parseKeyCommand` 目标改为 provider|vendor |
-| `src/web-ui/panel/*` | 面板增 vendor 管理（增删改）+ openai/minimax provider 卡片（vendor 下拉 + 选中 vendor 的 key 管理） |
+| `src/provider-fish.ts` | 新增：Fish Audio provider，注入 `resolveEndpoint()` |
+| `src/index.ts` | 注册 provider；`resolveEndpoint(vendorId)`；`keyTargetOf`（provider/vendor → KEY NAME）；SCHEMA/DEFAULT_SETTINGS 增 vendors + provider |
+| `src/command.ts` | `renderConfigTemplate`/`renderStatus` 支持协议 provider + vendor；`parseKeyCommand` 目标改为 provider|vendor |
+| `src/web-ui/panel/*` | 面板增 vendor 管理（增删改）+ 协议 provider 卡片（vendor 下拉 + 选中 vendor 的 key 管理） |
 | `tests/openai.spec.ts` / `tests/minimax.spec.ts` | 新增：请求构造/响应解析/流式 SSE 解析/hex 解码/异常 |
 | `tests/command.spec.ts` | `parseKeyCommand` 支持 vendor 目标；`renderStatus` 覆盖 openai/minimax 的 vendor + apiKeyRef |
 | `docs/tts-vendor-credential-design.md` | 本文 |
 
 ## 7. 非目标（本轮不做）
 
-- 迁移现有 `volcengine` / `siliconflow-cn` / `host` 到 vendor 模型（它们仍用旧 `apiKeyRef` 单一 key；vendor 模型先服务新增的 openai/minimax）。
-- 音色克隆（ElevenLabs/Fish）、Gemini TTS（多模态语音）——见选型文档，另立需求。
+- 迁移现有 `volcengine` / `siliconflow-cn` / `host` 到 vendor 模型（它们仍用旧 `apiKeyRef` 单一 key；vendor 模型服务 openai/minimax/fish-audio）。
+- Fish 的 MessagePack 即时参考音频克隆、Gemini TTS（多模态语音）不属于本轮接入范围。
 - 逐 vendor 的配额/用量统计。
 
 ## 8. 验收标准（AC）
 
-1. `vendors` 可定义多个 vendor，每个含 `label/provider/baseUrl/apiKeyRef`；openai 与 minimax 各能挂多个 vendor。
+1. `vendors` 可定义多个 vendor，每个含 `label/provider/baseUrl/apiKeyRef`；openai、minimax 与 fish-audio 各能挂多个 vendor。
 2. 切换 `providers.<protocol>.vendor` 即可换源，合成参数（voice_type/speed/…）不变。
 3. `api_key` 只经 credentials 解析，settings 永不落明文密钥；`/dsh-voice-tts-key` 能对「provider 或 vendor」set/unset/status（vendor 目标直接指定 vendor id，不切换当前 vendor）。
 4. OpenAI 合成走 `POST {baseUrl}/audio/speech`（`baseUrl` 含 `/v1`），`tts-1`/`tts-1-hd` 输出 mp3/opus/aac/flac 与流式均正确；9 音色可列。
 5. MiniMax 合成走 302AI `/t2a_v2`，非流式与流式 `data.audio` 均 hex 正确还原为音频；`voice_id`/`emotion`/`audio_setting` 生效；SSE 流式兼容 LF/CRLF 分隔且不丢末帧。
-6. 缺 vendor / vendor 不存在 / 缺 key / 协议不匹配时合成当场报可读错误（fail loud），不静默回退、不崩。
-7. `pnpm test` + `pnpm typecheck` + `pnpm build` 全绿；面板可增删改 vendor、配置 openai/minimax 卡片（vendor 下拉 + 选中 vendor 的 key 管理）。
+6. Fish Audio 官方与 302AI vendor 均可合成、列出声音模型并获取声音详情；官方留空 `voice_type` 使用内置默认音色，302AI 使用声音模型 ID。
+7. 缺 vendor / vendor 不存在 / 缺 key / 协议不匹配时合成当场报可读错误（fail loud），不静默回退、不崩。
+8. `pnpm test` + `pnpm typecheck` + `pnpm build` 全绿；面板可增删改 vendor、配置 openai/minimax/fish-audio 卡片（vendor 下拉 + 选中 vendor 的 key 管理）。

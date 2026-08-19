@@ -45,4 +45,17 @@ describe('TtsService', () => {
     await ctx.plugin(TtsService)
     expect(ctx.tts.listVoices('nope')).toEqual([])
   })
+
+  it('returns the full static catalog from listVoicePage without truncation', async () => {
+    const ctx = new Context()
+    await ctx.plugin(TtsService)
+    const voices = Array.from({ length: 230 }, (_, i) => ({
+      voice_type: `zh_v${i}`, name: `Voice ${i}`, scene: 's', lang: 'zh', ability: 'a', group: 'standard' as const,
+    }))
+    ctx.tts.registerProvider({ ...fakeProvider, listVoices: () => voices })
+    const page = await ctx.tts.listVoicePage('fake', {}, { pageSize: 100 })
+    expect(page.voices).toHaveLength(230)
+    expect(page.total).toBe(230)
+    expect(page.hasMore).toBe(false)
+  })
 })

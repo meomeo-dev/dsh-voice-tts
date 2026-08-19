@@ -33,6 +33,11 @@ describe('parseTtsCommand', () => {
     expect(parseTtsCommand('list-voices volcengine vivi')).toEqual({ kind: 'list-voices', provider: 'volcengine', query: 'vivi' })
   })
 
+  it('parses remote voice info lookup', () => {
+    expect(parseTtsCommand('voice-info fish-audio voice-123')).toEqual({ kind: 'voice-info', provider: 'fish-audio', voiceId: 'voice-123' })
+    expect(parseTtsCommand('voice-info fish-audio')).toEqual({ kind: 'help' })
+  })
+
   it('parses config --template with a default provider', () => {
     expect(parseTtsCommand('config --template')).toEqual({ kind: 'config-template', provider: 'volcengine' })
     expect(parseTtsCommand('config --template volcengine')).toEqual({ kind: 'config-template', provider: 'volcengine' })
@@ -226,5 +231,12 @@ describe('renderConfigTemplate', () => {
     const parsed = JSON.parse(renderConfigTemplate('siliconflow-cn')) as { provider: string; credentials: { apiKeyRef: string } }
     expect(parsed.provider).toBe('siliconflow-cn')
     expect(parsed.credentials.apiKeyRef).toBe('SILICONFLOW_API_KEY')
+  })
+
+  it('renders the Fish Audio vendor template', () => {
+    const parsed = JSON.parse(renderConfigTemplate('fish-audio')) as { provider: string; config: Record<string, unknown> }
+    expect(parsed.provider).toBe('fish-audio')
+    expect(parsed.config).toHaveProperty('vendor')
+    expect(parsed.config).toHaveProperty('voice_type')
   })
 })

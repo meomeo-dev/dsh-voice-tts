@@ -4,7 +4,7 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
 
 ## 状态
 
-**已实现(可运行)**:capability seam 三段式 + **多 provider**(volcengine + siliconflow-cn)+ `/dsh-voice-tts` 命令 + Web 配置面板 + bilingual 双语播报 + **turn-final 交付**(`delivery: off|file|host_play|stream`)。
+**已实现(可运行)**:capability seam 三段式 + **多 provider**(volcengine + siliconflow-cn + openai + minimax + Fish Audio 官方/302AI)+ `/dsh-voice-tts` 命令 + Web 配置面板 + bilingual 双语播报 + **turn-final 交付**(`delivery: off|file|host_play|stream`)。
 
 **`stream` 的前端 `<audio>` 播放尚未实现**:dsh web 无 audio 接缝(attachment 仅 image、client 无 audio),需 dsh 本体新增,超出本 bundle「不入侵 dsh 源码」边界。`stream` 的后端流式合成已就绪。见 [docs/design.md §6](docs/design.md)。
 
@@ -23,10 +23,12 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
   - **host**:本地命令行合成(`macOS say`),输出 AIFF,无需 API key。
   - **openai**:OpenAI 兼容 `POST /v1/audio/speech`(tts-1 / tts-1-hd),经 vendor 表解析 baseUrl + key。
   - **minimax**:DashScope 风格 `POST /minimaxi/v1/t2a_v2`(speech-2.8-turbo),hex 音频 + SSE 流式,经 vendor 表解析 baseUrl + key。
+  - **fish-audio**:Fish Audio `POST /v1/tts` 二进制流 + `/model` 分页声音目录 + `/model/{id}` 声音详情,通过 vendor 表支持官方 API 与 302AI。
 - **命令** `/dsh-voice-tts`:
   - `status` — 当前 provider / delivery / 各 provider 配置概览
   - `use <provider>` — 切换当前 provider
   - `list-voices [provider] [query]` — 列出音色(可按 voice_type/名称/场景/语种过滤)
+  - `voice-info <provider> <voice_id>` — 获取远程声音模型详情(JSON)
   - `config --template [provider]` — 输出完整配置模板(JSON)
   - `config --json <json>` — 覆盖「当前 provider」配置
   - `speak [--delivery <mode>] <text>` — 合成文本并按 delivery 交付(缺省读 settings.delivery)
@@ -46,6 +48,19 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
 voice-tts:
   delivery: off              # turn-final 交付:off / file / host_play / stream
   provider: volcengine       # 当前 provider
+  vendors:                    # openai/minimax/fish-audio 的 endpoint + KEY NAME
+    fish-audio-official:
+      label: Fish Audio 官方
+      provider: fish-audio
+      kind: official            # official 官方(全字段) / reseller 转售(302AI 等兼容子集)
+      baseUrl: https://api.fish.audio
+      apiKeyRef: TTS_FISH_AUDIO_API_KEY
+    302ai-fish-audio:
+      label: 302AI Fish Audio
+      provider: fish-audio
+      kind: reseller
+      baseUrl: https://api.302.ai/fish-audio
+      apiKeyRef: TTS_302AI_API_KEY
   providers:
     volcengine:
       apiKeyRef: VOLCENGINE_TTS_API_KEY   # KEY NAME(凭证引用名,值在 credentials)
@@ -74,6 +89,24 @@ voice-tts:
       bilingual: both
       voices: {}                      # 槽位形状同 volcengine,可调参数为 speed/gain
       voice_profiles: {}
+    fish-audio:
+      vendor: fish-audio-official  # 或 302ai-fish-audio
+      model: s2.1-pro               # 官方;302AI 可用 speech-1.5/speech-1.6/s1
+      voice_type: ""                # 官方留空使用内置默认音色;302AI 必须填声音模型 ID
+      format: mp3                   # mp3 / wav / pcm / opus
+      play_format: wav
+      sample_rate: 44100
+      mp3_bitrate: 128
+      opus_bitrate: -1000
+      speed: 1
+      volume: 0
+      normalize: true
+      normalize_loudness: true
+      latency: normal               # low / normal / balanced
+      chunk_length: 200             # [100,300]
+      bilingual: both
+      voices: {}
+      voice_profiles: {}
 ```
 
 > `host_play` 让「host 进程所在的机器」发声(个人 PC 上 `dsh web` 才能听见),不是「浏览器所在设备」;远程/容器部署时此模式无效。
@@ -87,6 +120,8 @@ API key 走 dsh 的 **credentials seam**,每个 provider 配置里只存 **KEY N
 ```yaml
 VOLCENGINE_TTS_API_KEY: <value>
 SILICONFLOW_API_KEY: <value>
+TTS_FISH_AUDIO_API_KEY: <value>
+TTS_302AI_API_KEY: <value>
 ```
 
 不进 settings / session log / 不硬编码。credentials-local 会回退到 process env / `.env`,但插件代码不直接读 `process.env`。
@@ -101,4 +136,4 @@ SILICONFLOW_API_KEY: <value>
 
 ## 文档证据
 
-volcengine 技术文档在 `docs/tech_stack/tts/volcengine/`,**过期 D+90 天**(2026-08-14 → 2026-11-12);siliconflow 见 https://api-docs.siliconflow.cn/docs/api/audio-speech-post 与 https://api-docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech。
+技术资料索引见 [docs/tech_stack/tts/README.md](docs/tech_stack/tts/README.md);volcengine 技术文档在 `docs/tech_stack/tts/volcengine/`,**过期 D+90 天**(2026-08-14 → 2026-11-12);siliconflow 见 https://api-docs.siliconflow.cn/docs/api/audio-speech-post 与 https://api-docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech;Fish Audio 见 [docs/tech_stack/tts/fish/api.md](docs/tech_stack/tts/fish/api.md)。

@@ -95,7 +95,7 @@ Gemini 3.1 Flash TTS 是**多模态语音生成**（200+ 内联语气标签、�
 
 - 若目标就是「便宜」：先做 **Google Cloud TTS**（默认 `WaveNet`，`Chirp 3 HD` 作高质量档可选），它单价最低、标准 REST + MP3/WAV 容器头，最贴合现有 `TtsProvider` 三件套（synthesize / streamSynthesize / listVoices）。
 - 若还要「中文情感表达」：**MiniMax** 的 HD 档是中文场景的加分项，也可做成 provider。
-- ElevenLabs / Fish Audio 属于「高质量配音 / 音色克隆」方向，与「便宜」是不同诉求，可后续按需加。
+- Fish Audio 已接入 `dsh-voice-tts`，官方与 302AI vendor 共用协议层；其声音库与内置默认音色见 [Fish API 证据](tech_stack/tts/fish/api.md)。ElevenLabs 仍属于后续 provider 候选。
 
 ## 6. 来源
 

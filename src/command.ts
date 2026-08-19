@@ -11,13 +11,15 @@ import { SILICONFLOW_CONFIG_TEMPLATE } from './siliconflow.js'
 import { HOST_CONFIG_TEMPLATE } from './host.js'
 import { OPENAI_CONFIG_TEMPLATE } from './openai.js'
 import { MINIMAX_CONFIG_TEMPLATE } from './minimax.js'
+import { FISH_CONFIG_TEMPLATE } from './fish.js'
 
 /** 命令用法回显文案。 */
 export const USAGE = [
   'Usage: /dsh-voice-tts [status|help]',
   '  status                            # 当前 provider / delivery / 各 provider 配置概览',
-  '  use <provider>                    # 切换当前 provider(如 volcengine / siliconflow-cn / openai / minimax / host)',
+  '  use <provider>                    # 切换当前 provider(如 volcengine / siliconflow-cn / openai / minimax / fish-audio / host)',
   '  list-voices [provider] [query]    # 列出可用音色(可按 voice_type/名称/场景/语种过滤)',
+  '  voice-info <provider> <voice_id>  # 获取远程声音模型详情(JSON)',
   '  config --template [provider]      # 输出某 provider 的完整配置模板(JSON)',
   '  config --json <json>              # 用 JSON 覆盖「当前 provider」的配置(部分字段即可)',
   '  speak [--delivery <mode>] <text>  # 合成文本,按 delivery(默认读 settings.delivery)交付',
@@ -31,6 +33,7 @@ export type TtsCommand =
   | { readonly kind: 'status' }
   | { readonly kind: 'use'; readonly provider: string }
   | { readonly kind: 'list-voices'; readonly provider: string; readonly query: string }
+  | { readonly kind: 'voice-info'; readonly provider: string; readonly voiceId: string }
   | { readonly kind: 'config-template'; readonly provider: string }
   | { readonly kind: 'config-json'; readonly json: string }
   | { readonly kind: 'speak'; readonly text: string; readonly delivery?: DeliveryMode }
@@ -60,6 +63,12 @@ export function parseTtsCommand(rawInput: string): TtsCommand {
     case 'list-voices': {
       const parts = rest.split(/\s+/u).filter(part => part.length > 0)
       return { kind: 'list-voices', provider: parts[0] ?? 'volcengine', query: parts.slice(1).join(' ') }
+    }
+    case 'voice-info': {
+      const parts = rest.split(/\s+/u).filter(part => part.length > 0)
+      return parts.length === 2
+        ? { kind: 'voice-info', provider: parts[0]!, voiceId: parts[1]! }
+        : { kind: 'help' }
     }
     case 'config': {
       const args = rest.trim()
@@ -133,6 +142,7 @@ export function renderConfigTemplate(providerId: string): string {
   if (providerId === 'host') return JSON.stringify(HOST_CONFIG_TEMPLATE, null, 2)
   if (providerId === 'openai') return JSON.stringify(OPENAI_CONFIG_TEMPLATE, null, 2)
   if (providerId === 'minimax') return JSON.stringify(MINIMAX_CONFIG_TEMPLATE, null, 2)
+  if (providerId === 'fish-audio') return JSON.stringify(FISH_CONFIG_TEMPLATE, null, 2)
   return JSON.stringify(VOLCENGINE_CONFIG_TEMPLATE, null, 2)
 }
 
@@ -160,7 +170,7 @@ export function renderStatus(settings: VoiceTtsSettings, providerIds: readonly s
       lines.push(`  command:    ${h.command}`)
       lines.push(`  voice_type: ${h.voice_type || '(system default)'}`)
       lines.push(`  rate:       ${h.rate}`)
-    } else if (id === 'openai' || id === 'minimax') {
+    } else if (id === 'openai' || id === 'minimax' || id === 'fish-audio') {
       const o = cfg as BilingualVoiceConfig & { vendor: string }
       const vendor = settings.vendors[o.vendor]
       lines.push(`  vendor:     ${o.vendor}${vendor === undefined ? ' (unknown!)' : ` (${vendor.label})`}`)

@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { resolvedVoice } from './bilingual.js'
-import type { BilingualVoiceConfig, TtsVoice, TunableParam, VoiceTtsSettings } from './types.js'
+import type { BilingualVoiceConfig, TtsVoice, TtsVoiceInfo, TtsVoiceListOptions, TtsVoicePage, TunableParam, VendorKind, VoiceTtsSettings } from './types.js'
 
 // ---- token ----
 
@@ -173,12 +173,42 @@ export function findPanelDist(): string | undefined {
  * 从 `voice_type` 推导音色的主要语种,供面板在 zh/en 槽位做软提示。
  * - volcengine:`<lang>_...` 前缀是 ISO 语言代码(`zh_`/`en_`/`ja_`/…),取前缀。
  * - siliconflow:`模型:音色` 形式,多语种模型,返回 `multi`。
+ * - Fish Audio 模型 ID 无语言前缀,返回 `multi`。
  * @param voiceType - 音色 id。
  * @returns 主要语种:`zh` / `en` / 其他 ISO 代码 / `multi`(多语种)。
  */
 export function primaryLangOf(voiceType: string): string {
+  if (!voiceType.includes('_')) return 'multi'
   if (voiceType.includes(':')) return 'multi'
   return voiceType.split('_')[0] ?? 'other'
+}
+
+/** 面板音色目录所依赖的目录访问能力(结构上等价于 TtsService,避免 import cordis)。 */
+export interface VoiceCatalog {
+  /** 一页远程目录(静态 provider 返回完整静态目录)。 */
+  listVoicePage(providerId: string, config: Record<string, unknown>, options?: TtsVoiceListOptions): Promise<TtsVoicePage>
+  /** 静态音色表。 */
+  listVoices(providerId: string): readonly TtsVoice[]
+}
+
+/** fish-audio 当前 vendor 的协议行为类别;旧 settings 或未知 vendor 视为官方。 */
+function fishVendorKind(settings: VoiceTtsSettings): VendorKind {
+  return settings.vendors[settings.providers['fish-audio'].vendor]?.kind ?? 'official'
+}
+
+/**
+ * 面板音色目录:远程分页优先,失败回退静态表并附加主要语种。
+ * fish-audio 的转售 vendor(302AI)失败直接抛错(fail loud,不静默降级为空表),
+ * 由面板展示错误横幅;官方 vendor 失败回退静态默认音色表。
+ */
+export async function panelVoices(catalog: VoiceCatalog, settings: VoiceTtsSettings, providerId: string): Promise<TtsVoice[]> {
+  try {
+    const page = await catalog.listVoicePage(providerId, settings.providers[providerId as keyof VoiceTtsSettings['providers']] as unknown as Record<string, unknown>, { pageSize: 100 })
+    return page.voices.map(voice => ({ ...voice, primaryLang: primaryLangOf(voice.voice_type) }))
+  } catch (error) {
+    if (providerId === 'fish-audio' && fishVendorKind(settings) === 'reseller') throw error
+    return catalog.listVoices(providerId).map(voice => ({ ...voice, primaryLang: primaryLangOf(voice.voice_type) }))
+  }
 }
 
 // ---- 状态预览 ----
@@ -225,11 +255,13 @@ export interface PanelDeps {
   /** 状态预览(当前 provider + 生效音色)。 */
   status(): PanelStatus
   /** 某 provider 的音色表。 */
-  listVoices(providerId: string): readonly TtsVoice[]
+  listVoices(providerId: string): readonly TtsVoice[] | Promise<readonly TtsVoice[]>
   /** 某 provider 的模型/资源 id 列表(面板下拉联动音色用)。 */
   listModels(providerId: string): readonly string[]
   /** 某 provider 的槽位可调参数注册表(面板动态参数控件用)。 */
   listParams(providerId: string): readonly TunableParam[]
+  /** 获取某 provider 的远程声音详情。 */
+  getVoiceInfo?(providerId: string, voiceId: string): Promise<TtsVoiceInfo>
   /** 某凭证引用(KEY NAME)的只读状态。 */
   keyStatus(ref: string): Promise<PanelKeyStatus>
   /** 写某凭证引用(KEY NAME)的值(走 credentials seam)。 */
@@ -247,6 +279,13 @@ interface TokenPayload {
 interface ProviderPayload {
   acToken: string
   provider: string
+}
+
+/** 带 provider 与声音 id 的请求载荷(voice-info)。 */
+interface VoiceInfoPayload {
+  acToken: string
+  provider: string
+  voiceId: string
 }
 
 /** 带凭证引用名(KEY NAME)的请求载荷(key-status / key-unset)。 */
@@ -275,6 +314,12 @@ const TOKEN_PAYLOAD: z<TokenPayload> = z.object({
 const PROVIDER_PAYLOAD: z<ProviderPayload> = z.object({
   acToken: z.string().min(1).required(),
   provider: z.string().min(1).required(),
+})
+
+const VOICE_INFO_PAYLOAD: z<VoiceInfoPayload> = z.object({
+  acToken: z.string().min(1).required(),
+  provider: z.string().min(1).required(),
+  voiceId: z.string().min(1).required(),
 })
 
 const REF_PAYLOAD: z<RefPayload> = z.object({
@@ -323,7 +368,7 @@ function panelError<T>(code: 'bad-request' | 'internal', message: string): RpcRe
  * 面板 RPC 分发:token 门 → 载荷校验 → 注入依赖调用。
  *
  * 端点:config-get(读配置)/ config-set(全量写配置)/ status-get(状态预览)/
- * voices-list(音色表)/ key-status(读 key 状态)/ key-set / key-unset。
+ * voices-list(音色表)/ voice-info(远程声音详情)/ key-status(读 key 状态)/ key-set / key-unset。
  * 未知端点与非法载荷一律 bad-request;依赖抛错折叠为 internal。
  */
 export async function handlePanelRpc(
@@ -357,7 +402,14 @@ export async function handlePanelRpc(
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')
         const parsed = parsePayload(PROVIDER_PAYLOAD, payload)
         if (!parsed.ok) return panelError('bad-request', parsed.message)
-        return { ok: true, value: { voices: deps.listVoices(parsed.value.provider), models: deps.listModels(parsed.value.provider), params: deps.listParams(parsed.value.provider) } }
+        return { ok: true, value: { voices: await deps.listVoices(parsed.value.provider), models: deps.listModels(parsed.value.provider), params: deps.listParams(parsed.value.provider) } }
+      }
+      case 'voice-info': {
+        if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')
+        const parsed = parsePayload(VOICE_INFO_PAYLOAD, payload)
+        if (!parsed.ok) return panelError('bad-request', parsed.message)
+        if (deps.getVoiceInfo === undefined) return panelError('bad-request', 'voice info is not supported')
+        return { ok: true, value: { voice: await deps.getVoiceInfo(parsed.value.provider, parsed.value.voiceId) } }
       }
       case 'key-status': {
         if (!authorized(payload, token)) return panelError('bad-request', 'missing or invalid acToken')

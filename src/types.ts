@@ -17,8 +17,35 @@ export interface TtsVoice {
   readonly ability: string
   /** 特殊标签(抖音同款 等),可空。 */
   readonly tag?: string
-  /** 归属表:`standard`(2.0 标准)或 `multilingual`(2.0 多语种)。 */
-  readonly group: 'standard' | 'multilingual'
+  /** 归属表:`standard`/`multilingual` 为内置表,`remote` 为远程声音模型。 */
+  readonly group: 'standard' | 'multilingual' | 'remote'
+}
+
+/** 远程声音目录的分页与过滤条件。 */
+export interface TtsVoiceListOptions {
+  readonly pageSize?: number
+  readonly pageNumber?: number
+  readonly title?: string
+  readonly tag?: string
+  readonly authorId?: string
+  readonly language?: string
+  readonly sortBy?: 'score' | 'task_count' | 'created_at'
+}
+
+/** 一页远程声音目录。 */
+export interface TtsVoicePage {
+  readonly voices: readonly TtsVoice[]
+  readonly total: number
+  readonly pageSize: number
+  readonly pageNumber: number
+  readonly hasMore: boolean
+}
+
+/** 远程声音详情:摘要用于选择器,metadata 保留 provider 原始字段。 */
+export interface TtsVoiceInfo {
+  readonly id: string
+  readonly voice: TtsVoice
+  readonly metadata: Readonly<Record<string, unknown>>
 }
 
 /** 一次合成请求:待合成文本 + 已解析的 provider 配置。 */
@@ -52,13 +79,17 @@ export interface TtsProvider {
   streamSynthesize(request: TtsRequest): AsyncIterable<TtsChunk>
   /** 该 provider 可用的音色列表。 */
   listVoices(): readonly TtsVoice[]
+  /** 可选的远程声音目录;静态 provider 不实现。 */
+  listVoicePage?(config: Record<string, unknown>, options?: TtsVoiceListOptions): Promise<TtsVoicePage>
+  /** 可选的远程声音详情;静态 provider 不实现。 */
+  getVoiceInfo?(config: Record<string, unknown>, voiceId: string): Promise<TtsVoiceInfo>
 }
 
 /** `config --template` 输出的单个字段描述。 */
 export interface ConfigTemplateField {
-  readonly type: 'string' | 'number' | 'object'
+  readonly type: 'string' | 'number' | 'boolean' | 'object'
   readonly required: boolean
-  readonly default: string | number | null
+  readonly default: string | number | boolean | null
   readonly description: string
   readonly enum?: readonly (string | number)[]
 }
@@ -212,6 +243,8 @@ export interface SiliconflowConfig extends BilingualVoiceConfig {
 export type VolcengineProviderSettings = VolcengineConfig & ApiKeyRefSettings
 /** 一个 siliconflow provider 的完整设置(config + 凭证引用)。 */
 export type SiliconflowProviderSettings = SiliconflowConfig & ApiKeyRefSettings
+/** Fish Audio provider 的完整设置(vendor 持有凭证引用)。 */
+export type FishProviderSettings = FishConfig
 
 /** host provider 的已解析配置(本地命令行 TTS,无凭证)。 */
 export interface HostConfig extends BilingualVoiceConfig {
@@ -221,12 +254,17 @@ export interface HostConfig extends BilingualVoiceConfig {
   rate: number
 }
 
+/** vendor 的协议行为类别:官方服务或兼容代理。 */
+export type VendorKind = 'official' | 'reseller'
+
 /** 一个 vendor:某个协议的 endpoint + 密钥引用。同一协议可接多个 vendor(不同折扣的 reseller)。 */
 export interface VendorRecord {
   /** 展示名。 */
   label: string
-  /** 所属协议 provider id(openai / minimax)。 */
-  provider: 'openai' | 'minimax'
+  /** 所属协议 provider id(openai / minimax / fish-audio)。 */
+  provider: 'openai' | 'minimax' | 'fish-audio'
+  /** 协议行为类别:官方服务全字段;转售(302AI 等)按兼容字段子集。旧 settings 缺省视为官方。 */
+  kind: VendorKind
   /** endpoint 前缀(host + 版本前缀),与 provider 协议层的 path 拼接成完整 URL。 */
   baseUrl: string
   /** 密钥引用名(KEY NAME);真值经 credentials seam 解析,不进 settings。 */
@@ -236,12 +274,14 @@ export interface VendorRecord {
 /** vendor 注册表(键 = vendor id)。 */
 export type Vendors = Record<string, VendorRecord>
 
-/** 一次 endpoint 解析结果:vendor 的 baseUrl + 已解析的 api key。 */
+/** 一次 endpoint 解析结果:vendor 的 baseUrl + 已解析的 api key + 协议行为类别。 */
 export interface ResolvedEndpoint {
   /** endpoint 前缀(host + 版本前缀)。 */
   readonly baseUrl: string
   /** API key 真值(已经 credentials seam 解析)。 */
   readonly apiKey: string
+  /** 协议行为类别(官方全字段 / 转售兼容子集);缺失的旧 settings 视为官方。 */
+  readonly kind: VendorKind
 }
 
 /** OpenAI TTS provider 的已解析配置(走 vendor 注册表,无独立 apiKeyRef)。 */
@@ -286,6 +326,54 @@ export interface MinimaxConfig extends BilingualVoiceConfig {
   channel: 1 | 2
 }
 
+/**
+ * Fish Audio provider 的已解析配置。
+ * `voice_type` 继承自 `BilingualVoiceConfig`,语义是 `reference_id`:
+ * 官方 vendor 留空使用内置默认音色,reseller(302AI)必须填写声音模型 ID。
+ */
+export interface FishConfig extends BilingualVoiceConfig {
+  /** 指向官方或 302AI Fish Audio vendor。 */
+  vendor: string
+  /** Fish Audio 模型请求头。 */
+  model: string
+  /** 输出格式。 */
+  format: 'mp3' | 'wav' | 'pcm' | 'opus'
+  /** host_play 的输出格式。 */
+  play_format: 'mp3' | 'wav' | 'pcm' | 'opus'
+  /** 采样率 Hz。 */
+  sample_rate: number
+  /** MP3 码率 kbps。 */
+  mp3_bitrate: 64 | 128 | 192
+  /** Opus 码率 bps,-1000 表示自动。 */
+  opus_bitrate: -1000 | 24000 | 32000 | 48000 | 64000
+  /** 语速 [0.5, 2.0]。 */
+  speed: number
+  /** prosody 音量(dB);Fish API 未声明固定上下界。 */
+  volume: number
+  /** 是否规范化英文/中文数字文本。 */
+  normalize: boolean
+  /** 是否规范化输出响度。 */
+  normalize_loudness: boolean
+  /** 延迟策略。 */
+  latency: 'low' | 'normal' | 'balanced'
+  /** 文本分块长度 [100, 300]。 */
+  chunk_length: number
+  /** 采样温度 [0, 1]。 */
+  temperature: number
+  /** nucleus sampling [0, 1]。 */
+  top_p: number
+  /** 每个文本分块的最大音频 token 数。 */
+  max_new_tokens: number
+  /** 重复惩罚系数。 */
+  repetition_penalty: number
+  /** 新分块的最小字符数 [0, 100]。 */
+  min_chunk_length: number
+  /** 是否把前一分块作为上下文。 */
+  condition_on_previous_chunks: boolean
+  /** 批处理提前停止阈值 [0, 1]。 */
+  early_stop_threshold: number
+}
+
 /** `voice-tts` 设置命名空间的已解析切片(多 provider)。 */
 export interface VoiceTtsSettings {
   /** turn-final 交付方式:off 不处理 / file 落盘 / host_play 本机播放 / stream 流式。 */
@@ -296,7 +384,7 @@ export interface VoiceTtsSettings {
   storage: StorageConfig
   /** 本机播放器配置(见 docs/audio-storage-and-playback.md §4.2)。 */
   player: PlayerConfig
-  /** vendor 注册表(endpoint + key 引用,openai/minimax 从这取 endpoint)。 */
+  /** vendor 注册表(endpoint + key 引用,协议 provider 从这取 endpoint)。 */
   vendors: Vendors
   /** 各 provider 的设置(键 = provider id,与注册的 provider 一一对应)。 */
   providers: {
@@ -305,5 +393,6 @@ export interface VoiceTtsSettings {
     host: HostConfig
     openai: OpenaiConfig
     minimax: MinimaxConfig
+    'fish-audio': FishProviderSettings
   }
 }

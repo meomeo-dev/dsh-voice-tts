@@ -8,6 +8,7 @@ import {
   PANEL_CHANNEL,
   PANEL_PAGE,
   panelUrl,
+  panelVoices,
   primaryLangOf,
   queryToken,
   renderPanelShell,
@@ -109,6 +110,55 @@ describe('primaryLangOf', () => {
   it('treats siliconflow model:voice ids as multilingual', () => {
     expect(primaryLangOf('FunAudioLLM/CosyVoice2-0.5B:alex')).toBe('multi')
     expect(primaryLangOf('fnlp/MOSS-TTSD-v0.5:diana')).toBe('multi')
+  })
+})
+
+describe('panelVoices', () => {
+  const fishSettings: VoiceTtsSettings = {
+    delivery: 'off',
+    provider: 'fish-audio',
+    providers: {
+      volcengine: { ...makeVolcengineConfig(), apiKeyRef: 'V' },
+      'siliconflow-cn': makeSettings().providers['siliconflow-cn'],
+      host: { command: 'say', voice_type: '', rate: 175, bilingual: 'both', voices: {}, voice_profiles: {} },
+      openai: { vendor: 'o', model: 'tts-1', voice_type: '', instructions: '', format: 'mp3', play_format: 'mp3', speed: 1, bilingual: 'both', voices: {}, voice_profiles: {} },
+      minimax: { vendor: 'm', model: 'speech-2.8-turbo', voice_type: '', speed: 1, vol: 1, pitch: 0, emotion: '', sample_rate: 32000, format: 'mp3', play_format: 'wav', bitrate: 128000, channel: 1, bilingual: 'both', voices: {}, voice_profiles: {} },
+      'fish-audio': { vendor: '302ai-fish-audio', model: 's1', voice_type: 'voice-1', format: 'mp3', play_format: 'wav', sample_rate: 44100, mp3_bitrate: 128, opus_bitrate: -1000, speed: 1, volume: 0, normalize: true, normalize_loudness: true, latency: 'normal', chunk_length: 200, temperature: 0.7, top_p: 0.7, max_new_tokens: 1024, repetition_penalty: 1.2, min_chunk_length: 50, condition_on_previous_chunks: true, early_stop_threshold: 1, bilingual: 'both', voices: {}, voice_profiles: {} },
+    },
+    vendors: {
+      'fish-audio-official': { label: 'Fish Audio 官方', provider: 'fish-audio', kind: 'official', baseUrl: 'https://api.fish.audio', apiKeyRef: 'TTS_FISH_AUDIO_API_KEY' },
+      '302ai-fish-audio': { label: '302AI', provider: 'fish-audio', kind: 'reseller', baseUrl: 'https://api.302.ai/fish-audio', apiKeyRef: 'TTS_302AI_API_KEY' },
+    },
+    storage: { scope: 'user', dir: '' },
+    player: { command: '' },
+  }
+
+  const remoteVoice: TtsVoice = { voice_type: 'voice-1', name: 'Voice', scene: 's', lang: 'en', ability: 'a', group: 'remote' }
+  const staticVoice: TtsVoice = { voice_type: 'zh_female_vv_uranus_bigtts', name: 'V', scene: 's', lang: 'zh', ability: 'a', group: 'standard' }
+
+  function catalog(overrides: Partial<{
+    listVoicePage: () => Promise<{ voices: TtsVoice[]; total: number; pageSize: number; pageNumber: number; hasMore: boolean }>
+    listVoices: () => readonly TtsVoice[]
+  }> = {}): Parameters<typeof panelVoices>[0] {
+    return {
+      listVoicePage: async () => ({ voices: [remoteVoice], total: 1, pageSize: 100, pageNumber: 1, hasMore: false }),
+      listVoices: () => [staticVoice],
+      ...overrides,
+    }
+  }
+
+  it('maps remote pages and derives the primary language', async () => {
+    const out = await panelVoices(catalog(), fishSettings, 'fish-audio')
+    expect(out).toEqual([{ ...remoteVoice, primaryLang: 'multi' }])
+  })
+
+  it('falls back to the static catalog when the official vendor lookup fails', async () => {
+    const out = await panelVoices(catalog({ listVoicePage: async () => { throw new Error('upstream down') } }), { ...fishSettings, providers: { ...fishSettings.providers, 'fish-audio': { ...fishSettings.providers['fish-audio'], vendor: 'fish-audio-official' } } }, 'fish-audio')
+    expect(out).toEqual([{ ...staticVoice, primaryLang: 'zh' }])
+  })
+
+  it('fails loud when the reseller (302AI) vendor lookup fails', async () => {
+    await expect(panelVoices(catalog({ listVoicePage: async () => { throw new Error('missing key') } }), fishSettings, 'fish-audio')).rejects.toThrow('missing key')
   })
 })
 
@@ -222,6 +272,13 @@ describe('handlePanelRpc', () => {
     expect(listModels).toHaveBeenCalledWith('volcengine')
     expect(listParams).toHaveBeenCalledWith('volcengine')
     expect(result).toEqual({ ok: true, value: { voices: [voice], models: ['seed-tts-2.0', 'seed-icl-2.0'], params: [{ key: 'pitch', label: '音调', min: -12, max: 12, step: 1 }] } })
+  })
+
+  it('voice-info delegates a provider detail lookup', async () => {
+    const getVoiceInfo = vi.fn(async () => ({ id: 'voice-1', voice, metadata: { _id: 'voice-1' } }))
+    const result = await handlePanelRpc('voice-info', { acToken: TOKEN, provider: 'fish-audio', voiceId: 'voice-1' }, TOKEN, deps({ getVoiceInfo }))
+    expect(getVoiceInfo).toHaveBeenCalledWith('fish-audio', 'voice-1')
+    expect(result).toEqual({ ok: true, value: { voice: { id: 'voice-1', voice, metadata: { _id: 'voice-1' } } } })
   })
 
   it('key-status returns configured/source/writable without a value', async () => {
