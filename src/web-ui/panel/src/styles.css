@@ -471,6 +471,58 @@ button.refresh.danger:hover {
   max-width: 360px;
 }
 
+button.refresh:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Fish Audio 远程声音详情。 */
+.voice-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-l1);
+  border-radius: 6px;
+  background: var(--bg-platform);
+}
+
+.voice-info-title {
+  font-weight: 600;
+  color: var(--label-primary);
+}
+
+.voice-info-grid {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  gap: 4px 12px;
+  font-size: 13px;
+}
+
+.voice-info-grid > span:nth-child(even) {
+  overflow-wrap: anywhere;
+}
+
+.voice-info details {
+  font-size: 12px;
+}
+
+.voice-info summary {
+  cursor: pointer;
+  color: var(--label-secondary);
+}
+
+.voice-info pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--bg-base);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* 凭证(KEY NAME + 值)管理区 */
 .credential {
   display: flex;

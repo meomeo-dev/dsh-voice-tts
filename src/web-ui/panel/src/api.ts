@@ -184,6 +184,13 @@ export interface Voice {
   readonly primaryLang?: string
 }
 
+/** 远程声音详情(镜像 host 侧 TtsVoiceInfo)。 */
+export interface VoiceInfo {
+  readonly id: string
+  readonly voice: Voice
+  readonly metadata: Readonly<Record<string, unknown>>
+}
+
 /** API key 只读状态(镜像 host 侧 PanelKeyStatus)。 */
 export interface KeyStatus {
   readonly configured: boolean

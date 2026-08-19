@@ -28,7 +28,7 @@ DeepSeek Harness 的 **TTS 语音合成** bundle:文本 → 语音。独立于 [
   - `status` — 当前 provider / delivery / 各 provider 配置概览
   - `use <provider>` — 切换当前 provider
   - `list-voices [provider] [query]` — 列出音色(可按 voice_type/名称/场景/语种过滤)
-  - `voice-info <provider> <voice_id>` — 获取远程声音模型详情(JSON)
+  - `voice-info <provider> <voice_id>` — 获取远程声音模型详情(JSON);Web 面板 Fish Audio 卡片也可查询并展开 metadata
   - `config --template [provider]` — 输出完整配置模板(JSON)
   - `config --json <json>` — 覆盖「当前 provider」配置
   - `speak [--delivery <mode>] <text>` — 合成文本并按 delivery 交付(缺省读 settings.delivery)

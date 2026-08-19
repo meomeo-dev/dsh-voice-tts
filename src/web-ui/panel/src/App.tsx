@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { readBootstrap, rpc } from './api'
 import type {
-  Bootstrap, FishConfig, HostConfig, KeyStatus, MinimaxConfig, OpenaiConfig, Settings, SiliconflowConfig, Status, TunableParam, VendorRecord, Voice, Voices, VoiceSlot, VolcengineConfig,
+  Bootstrap, FishConfig, HostConfig, KeyStatus, MinimaxConfig, OpenaiConfig, Settings, SiliconflowConfig, Status, TunableParam, VendorRecord, Voice, VoiceInfo, Voices, VoiceSlot, VolcengineConfig,
 } from './api'
 
 const DELIVERY_OPTIONS = ['off', 'file', 'host_play', 'stream'] as const
@@ -884,6 +884,35 @@ function FishCard(props: {
   // 官方/302AI 行为由 vendor 的 kind 决定(与后端同源,不用 URL 字符串判定)。
   const reseller = selected?.kind === 'reseller'
   const modelOptions: readonly string[] = reseller ? FISH_302_MODELS : FISH_OFFICIAL_MODELS
+  const [voiceInfo, setVoiceInfo] = useState<VoiceInfo | undefined>(undefined)
+  const [voiceInfoError, setVoiceInfoError] = useState<string | undefined>(undefined)
+  const [voiceInfoLoading, setVoiceInfoLoading] = useState(false)
+
+  useEffect(() => {
+    setVoiceInfo(undefined)
+    setVoiceInfoError(undefined)
+  }, [cfg.vendor, cfg.voice_type])
+
+  const inspectVoice = async (): Promise<void> => {
+    const voiceId = cfg.voice_type.trim()
+    if (voiceId.length === 0) {
+      setVoiceInfo(undefined)
+      setVoiceInfoError('请先填写声音模型 ID(reference_id)。')
+      return
+    }
+    setVoiceInfoLoading(true)
+    setVoiceInfoError(undefined)
+    try {
+      const result = await rpc<{ voice: VoiceInfo }>(props.bootstrap, 'voice-info', { provider: 'fish-audio', voiceId })
+      setVoiceInfo(result.voice)
+    } catch (error) {
+      setVoiceInfo(undefined)
+      setVoiceInfoError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setVoiceInfoLoading(false)
+    }
+  }
+
   const changeVendor = (next: string): void => {
     const models: readonly string[] = vendors[next]?.kind === 'reseller' ? FISH_302_MODELS : FISH_OFFICIAL_MODELS
     set({ vendor: next, model: models.some(model => model === cfg.model) ? cfg.model : models[0] })
@@ -922,9 +951,30 @@ function FishCard(props: {
         </label>
         <label className="field">
           <span className="field-head"><span className="mono key">voice_type</span><span className="desc">reference_id(302AI 必填;官方可留空)</span></span>
-          <input type="text" value={cfg.voice_type} onChange={e => set({ voice_type: e.target.value })} placeholder={reseller ? '声音模型 ID(302AI 必填)' : '声音模型 ID 或留空(官方默认音色)'} />
+          <div className="key-actions">
+            <input type="text" value={cfg.voice_type} onChange={e => set({ voice_type: e.target.value })} placeholder={reseller ? '声音模型 ID(302AI 必填)' : '声音模型 ID 或留空(官方默认音色)'} />
+            <button type="button" className="refresh" disabled={voiceInfoLoading || cfg.voice_type.trim().length === 0} onClick={() => void inspectVoice()}>
+              {voiceInfoLoading ? '查询中…' : '查询声音信息'}
+            </button>
+          </div>
         </label>
       </div>
+      {voiceInfoError !== undefined && <div className="banner error">声音信息查询失败: {voiceInfoError}</div>}
+      {voiceInfo !== undefined && (
+        <div className="voice-info">
+          <div className="voice-info-title">声音信息: {voiceInfo.voice.name}</div>
+          <div className="voice-info-grid">
+            <span className="mono key">id</span><span className="mono">{voiceInfo.id}</span>
+            <span className="mono key">scene</span><span>{voiceInfo.voice.scene}</span>
+            <span className="mono key">lang</span><span>{voiceInfo.voice.lang}</span>
+            <span className="mono key">ability</span><span>{voiceInfo.voice.ability}</span>
+          </div>
+          <details>
+            <summary>查看原始 metadata</summary>
+            <pre>{JSON.stringify(voiceInfo.metadata, null, 2)}</pre>
+          </details>
+        </div>
+      )}
       <div className="field-row">
         <label className="field">
           <span className="field-head"><span className="mono key">format</span><span className="desc">file/stream 格式</span></span>
