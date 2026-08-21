@@ -1,6 +1,6 @@
 {
   "name": "@meomeo-dev/dsh-voice-tts",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "Text-to-speech bundle for DeepSeek Harness with multi-provider synthesis, voice catalogs, playback, and a web configuration UI.",
   "repository": {
     "type": "git",
