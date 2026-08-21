@@ -6,7 +6,10 @@ import {
   effectiveVoices,
   filterSentences,
   planBilingualSpeech,
+  scriptRuns,
   segmentSentences,
+  suppressBySeparators,
+  suppressSegments,
   voiceFor,
 } from '../src/bilingual.js'
 import type { VolcengineConfig } from '../src/types.js'
@@ -22,6 +25,9 @@ const base: VolcengineConfig = {
   loudness_rate: 0,
   pitch: 0,
   bilingual: 'both',
+  segment_strategy: 'sentence',
+  segment_threshold: 5,
+  segment_separators: '',
   voices: {},
   voice_profiles: {},
 }
@@ -184,6 +190,123 @@ describe('planBilingualSpeech', () => {
     const plan = planBilingualSpeech('中文句。English sentence.', cfg)
     expect(plan.runs.map(r => r.voice)).toEqual(['zh_v', 'zh_v'])
     expect(plan.runs.map(r => r.params)).toEqual([{ loudness_rate: 0 }, { loudness_rate: 40 }])
+  })
+})
+
+describe('scriptRuns', () => {
+  it('groups consecutive same-script characters, skipping separators', () => {
+    const runs = scriptRuns('大家好。Hello world. 继续')
+    expect(runs.map(r => ({ text: r.text, script: r.script, scriptChars: r.scriptChars }))).toEqual([
+      { text: '大家好。', script: 'zh', scriptChars: 3 },
+      { text: 'Hello world. ', script: 'en', scriptChars: 10 },
+      { text: '继续', script: 'zh', scriptChars: 2 },
+    ])
+  })
+
+  it('keeps offsets aligned with the source text', () => {
+    const runs = scriptRuns('a 好b')
+    expect(runs.map(r => [r.start, r.end])).toEqual([[0, 2], [2, 3], [3, 4]])
+  })
+
+  it('returns no runs for text without CJK or Latin', () => {
+    expect(scriptRuns(' .,。')).toEqual([])
+  })
+})
+
+describe('suppressSegments', () => {
+  it('drops a short English run sandwiched by Chinese', () => {
+    expect(suppressSegments('大家好。Fox. 继续。', 5)).toBe('大家好。继续。')
+  })
+
+  it('keeps a long English run (not a short interjection)', () => {
+    expect(suppressSegments('大家好。The quick brown fox jumps. 继续。', 5)).toBe('大家好。The quick brown fox jumps. 继续。')
+  })
+
+  it('keeps runs at either text edge (not sandwiched)', () => {
+    expect(suppressSegments('The quick fox. 大家好。', 5)).toBe('The quick fox. 大家好。')
+    expect(suppressSegments('大家好。The quick fox.', 5)).toBe('大家好。The quick fox.')
+  })
+
+  it('honors the threshold', () => {
+    expect(suppressSegments('大家好。Fox. 继续。', 2)).toBe('大家好。Fox. 继续。')
+    expect(suppressSegments('大家好。The fox. 继续。', 10)).toBe('大家好。继续。')
+  })
+})
+
+describe('suppressBySeparators', () => {
+  it('suppresses interjections inside each window independently', () => {
+    expect(suppressBySeparators('中文一|中文 Fox. 中文|继续', '|', 5)).toBe('中文一|中文 中文|继续')
+  })
+
+  it('treats the window edge as text edge (no sandwich across windows)', () => {
+    expect(suppressBySeparators('中文一|Fox. 中文|继续', '|', 5)).toBe('中文一|Fox. 中文|继续')
+  })
+
+  it('returns the text unchanged when the separator never matches', () => {
+    expect(suppressBySeparators('中文 Fox. 中文', '|', 5)).toBe('中文 Fox. 中文')
+    expect(suppressBySeparators('中文 Fox. 中文', '', 5)).toBe('中文 Fox. 中文')
+  })
+
+  it('supports multi-character separators', () => {
+    expect(suppressBySeparators('甲||乙 Fox. 乙||丙', '||', 5)).toBe('甲||乙 乙||丙')
+  })
+})
+
+describe('planBilingualSpeech · segment strategy off', () => {
+  it('returns the whole text as a single run with the unified voice', () => {
+    const cfg = { ...base, segment_strategy: 'off' as const }
+    const plan = planBilingualSpeech('大家好。Fox. 继续。', cfg)
+    expect(plan.runs).toHaveLength(1)
+    expect(plan.runs[0]).toMatchObject({ voice: 'zh_default', count: 1, text: '大家好。Fox. 继续。' })
+    expect(plan.total).toBe(1)
+    expect(plan.spoken).toBe(1)
+  })
+
+  it('ignores the bilingual filter (reads everything)', () => {
+    const cfg = { ...base, bilingual: 'english_only' as const, segment_strategy: 'off' as const }
+    const plan = planBilingualSpeech('纯中文一句。', cfg)
+    expect(plan.spoken).toBe(1)
+  })
+})
+
+describe('planBilingualSpeech · segment strategy script-run', () => {
+  const scriptCfg = { ...base, segment_strategy: 'script-run' as const }
+
+  it('skips a short English interjection sentence', () => {
+    const plan = planBilingualSpeech('大家好。Fox. 继续。', scriptCfg)
+    expect(plan.spoken).toBe(2)
+    expect(plan.runs).toHaveLength(1)
+    expect(plan.runs[0]).toMatchObject({ count: 2, text: '大家好。 继续。' })
+  })
+
+  it('keeps a long English sentence and mixes by voice', () => {
+    const cfg = { ...scriptCfg, voices: { zh: { voice_type: 'zh_v' }, en: { voice_type: 'en_v' } } }
+    const plan = planBilingualSpeech('大家好。The quick brown fox jumps. 继续。', cfg)
+    expect(plan.spoken).toBe(3)
+    expect(plan.runs.map(r => r.voice)).toEqual(['zh_v', 'en_v', 'zh_v'])
+  })
+
+  it('does not suppress in language-only modes (strict filter unchanged)', () => {
+    const cfg = { ...scriptCfg, bilingual: 'english_only' as const }
+    const plan = planBilingualSpeech('大家好。Fox. 继续。', cfg)
+    expect(plan.spoken).toBe(1)
+    expect(plan.runs.map(r => r.text)).toEqual(['Fox.'])
+  })
+})
+
+describe('planBilingualSpeech · segment strategy custom-separator', () => {
+  const sepCfg = { ...base, segment_strategy: 'custom-separator' as const, segment_separators: '|' }
+
+  it('suppresses interjections inside matched windows', () => {
+    const plan = planBilingualSpeech('甲。|中文 Fox. 中文。|乙。', sepCfg)
+    expect(plan.spoken).toBe(3)
+    expect(plan.runs.map(r => r.text).join('')).not.toContain('Fox')
+  })
+
+  it('falls back to sentence-level when the separator never matches', () => {
+    const plan = planBilingualSpeech('甲。中文 Fox. 中文。', sepCfg)
+    expect(plan.spoken).toBe(3)
+    expect(plan.runs.map(r => r.text).join('')).toContain('Fox')
   })
 })
 

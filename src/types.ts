@@ -127,6 +127,15 @@ export type SentenceLang = 'zh' | 'en' | 'mixed'
 /** bilingual 播报模式:`both` 全读、`english_only` 只读纯英文、`chinese_only` 只读纯中文。 */
 export type BilingualMode = 'both' | 'english_only' | 'chinese_only'
 
+/**
+ * 文本切分/段落判定策略(见 docs/segment-strategy-design.md):
+ * - `off`:整段单一 VoiceRun,不做语言判定与抑制。
+ * - `sentence`:句子级(现状,`sentence-splitter` 切句后逐句分类/过滤)。
+ * - `script-run`:连续同脚本区段扫描,短区段被异语言夹持则跳过(仅 both 生效)。
+ * - `custom-separator`:按用户自定义可见字符组合切窗口,窗口内复用 script-run 判定。
+ */
+export type SegmentStrategy = 'off' | 'sentence' | 'script-run' | 'custom-separator'
+
 /** 一个可调合成参数的元数据(驱动 schemastery 校验、Web 面板控件与 `config --template` 文档三处)。 */
 export interface TunableParam {
   /** 参数键(与 provider 顶层同名字段,如 `loudness_rate` / `speed`)。 */
@@ -203,6 +212,12 @@ export interface PlayerConfig {
 export interface BilingualVoiceConfig {
   /** bilingual 播报模式。 */
   bilingual: BilingualMode
+  /** 文本切分策略:`off` 整段单一 run / `sentence` 句子级(现状)/ `script-run` 连续区段夹杂抑制 / `custom-separator` 自定义分段符切窗口。 */
+  segment_strategy: SegmentStrategy
+  /** `script-run` 与 `custom-separator` 的夹杂区段长度阈值(区段脚本字符数 ≤ 该值且被异语言区段夹持 → 跳过)。 */
+  segment_threshold: number
+  /** `custom-separator` 的自定义分段符(任一命中即切窗口;空串 = 无命中,退化为句子级)。 */
+  segment_separators: string
   /** 默认音色 ID(volcengine 的 `speaker` / siliconflow 与 openai 的 `voice` / minimax 的 `voice_id`,值随 provider)。 */
   voice_type: string
   /** 各语言类别音色覆盖(缺省回退 voice_type)。 */

@@ -52,6 +52,18 @@ export const HOST_CONFIG_TEMPLATE: ConfigTemplate = {
       type: 'string', required: false, default: 'both', enum: ['both', 'english_only', 'chinese_only'],
       description: 'bilingual 播报模式:both 全读 / english_only 只读纯英文 / chinese_only 只读纯中文;中英混写句仅 both 播报',
     },
+    segment_strategy: {
+      type: 'string', required: false, default: 'sentence', enum: ['off', 'sentence', 'script-run', 'custom-separator'],
+      description: '文本切分策略:off 整段单一音色 / sentence 句子级(现状) / script-run 连续区段夹杂抑制 / custom-separator 自定义分段符切窗口',
+    },
+    segment_threshold: {
+      type: 'number', required: false, default: 5,
+      description: '夹杂区段长度阈值:区段脚本字符数 ≤ 该值且被异语言区段夹持则跳过(仅 both 生效)',
+    },
+    segment_separators: {
+      type: 'string', required: false, default: '',
+      description: 'custom-separator 的自定义分段符(任一命中即切窗口;空串 = 无命中,退化为句子级)',
+    },
     voices: {
       type: 'object', required: false, default: null,
       description: '各语言类别槽位 { zh, en, mixed },每槽 { voice_type };缺省回退 voice_type',

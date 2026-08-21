@@ -44,6 +44,9 @@ function resolveConfig(config: Record<string, unknown>): VolcengineConfig {
     loudness_rate: typeof config.loudness_rate === 'number' ? config.loudness_rate : 0,
     pitch: typeof config.pitch === 'number' ? config.pitch : 0,
     bilingual: 'both',
+    segment_strategy: 'sentence',
+    segment_threshold: 5,
+    segment_separators: '',
     voices: {},
     voice_profiles: {},
   }

@@ -12,6 +12,14 @@ import type {
 
 const DELIVERY_OPTIONS = ['off', 'file', 'host_play', 'stream'] as const
 const BILINGUAL_OPTIONS = ['both', 'english_only', 'chinese_only'] as const
+const SEGMENT_STRATEGY_OPTIONS = ['off', 'sentence', 'script-run', 'custom-separator'] as const
+/** 切分策略展示名。 */
+const SEGMENT_STRATEGY_LABEL: Record<string, string> = {
+  off: 'off（整段单一音色）',
+  sentence: 'sentence（按句子切分）',
+  'script-run': 'script-run（连续区段夹杂抑制）',
+  'custom-separator': 'custom-separator（自定义分段符）',
+}
 const LANG_KEYS = ['zh', 'en', 'mixed'] as const
 const PROVIDERS = ['volcengine', 'siliconflow-cn', 'host', 'openai', 'minimax', 'fish-audio'] as const
 /** vendor 允许归属的协议。 */
@@ -416,19 +424,20 @@ function KeyNameField(props: { value: string; onChange: (next: string) => void }
   )
 }
 
-/** 双语共享字段(voice_type / bilingual / voices)。每个语言槽位含音色 + 可调参数。 */
+/** 双语共享字段(voice_type / bilingual / 切分策略 / voices)。每个语言槽位含音色 + 可调参数。 */
 function BilingualFields(props: {
-  cfg: { voice_type: string; bilingual: string; voices: Voices }
+  cfg: { voice_type: string; bilingual: string; segment_strategy: string; segment_threshold: number; segment_separators: string; voices: Voices }
   voices: readonly Voice[]
   params: readonly TunableParam[]
   inherited: Record<string, number>
   hideVoiceType?: boolean
-  onChange: (patch: { voice_type?: string; bilingual?: 'both' | 'english_only' | 'chinese_only'; voices?: Voices }) => void
+  onChange: (patch: { voice_type?: string; bilingual?: 'both' | 'english_only' | 'chinese_only'; segment_strategy?: 'off' | 'sentence' | 'script-run' | 'custom-separator'; segment_threshold?: number; segment_separators?: string; voices?: Voices }) => void
 }): JSX.Element {
   const { cfg } = props
   const setSlot = (lang: 'zh' | 'en' | 'mixed', slot: VoiceSlot): void => {
     props.onChange({ voices: { ...cfg.voices, [lang]: slot } })
   }
+  const usesThreshold = cfg.segment_strategy === 'script-run' || cfg.segment_strategy === 'custom-separator'
   return (
     <>
       <div className="field-row">
@@ -439,7 +448,25 @@ function BilingualFields(props: {
             {BILINGUAL_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
         </label>
+        <label className="field">
+          <span className="field-head"><span className="mono key">segment_strategy</span><span className="desc">文本切分策略</span></span>
+          <select value={cfg.segment_strategy} onChange={e => props.onChange({ segment_strategy: e.target.value as 'off' | 'sentence' | 'script-run' | 'custom-separator' })}>
+            {SEGMENT_STRATEGY_OPTIONS.map(o => <option key={o} value={o}>{SEGMENT_STRATEGY_LABEL[o]}</option>)}
+          </select>
+        </label>
+        {usesThreshold && (
+          <label className="field">
+            <span className="field-head"><span className="mono key">segment_threshold</span><span className="desc">夹杂区段长度阈值</span></span>
+            <input type="number" min={1} max={100} value={cfg.segment_threshold} onChange={e => props.onChange({ segment_threshold: Number(e.target.value) || 5 })} />
+          </label>
+        )}
       </div>
+      {cfg.segment_strategy === 'custom-separator' && (
+        <label className="field">
+          <span className="field-head"><span className="mono key">segment_separators</span><span className="desc">自定义分段符(任一命中即切窗口,空 = 不切)</span></span>
+          <input type="text" value={cfg.segment_separators} onChange={e => props.onChange({ segment_separators: e.target.value })} placeholder="如 |" />
+        </label>
+      )}
       <div className="voice-slots">
         <SlotEditor slot={cfg.voices.zh ?? {}} voices={props.voices} params={props.params} inherited={props.inherited} label="voices.zh" desc="中文槽位" expectedLang="zh" onChange={slot => setSlot('zh', slot)} />
         <SlotEditor slot={cfg.voices.en ?? {}} voices={props.voices} params={props.params} inherited={props.inherited} label="voices.en" desc="英文槽位" expectedLang="en" onChange={slot => setSlot('en', slot)} />

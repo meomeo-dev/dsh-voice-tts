@@ -244,11 +244,32 @@ API key 走 dsh 的 **credentials seam**(`ctx.credentials`)。每个 provider �
 
 ### 语义
 
-1. **切分 + 判定**:文本先按段落/句末符切句,每句判定语言:
+1. **切分 + 判定**:默认(`segment_strategy: sentence`)按句末符切句,每句判定语言:
    - `zh` — 纯中文(无拉丁字母)
    - `en` — 纯英文(无 CJK 字符)
    - `mixed` — 同时含中英(中英混写)
    英文句界识别对常见缩写(`Mr.` `Dr.` `e.g.` `U.S.`)与小数(`3.14`)做了抑制,避免误切。
+   切分策略可切换(`segment_strategy`),详见「切分策略」小节。
+
+### 切分策略(`segment_strategy`)
+
+四个互斥策略(设计定稿见 `docs/segment-strategy-design.md`),逐 provider 配置,
+与 `bilingual` 同构。除 `sentence` 外均为全新行为:
+
+| 策略 | 行为 | 典型效果 |
+|---|---|---|
+| `sentence`(默认) | 句子级:切句 → 判定 → 过滤 → 音色分配 | 现状行为 |
+| `off` | 整段单一 VoiceRun,统一音色,不做判定/抑制/过滤 | 每句都读,绝对可预期 |
+| `script-run` | Unicode 脚本区段扫描,区段字符数 ≤ `segment_threshold`(默认 5)且被异语言区段夹持 → 跳过 | 中文段夹的短英文句不读 |
+| `custom-separator` | 按 `segment_separators` 切窗口,窗口内复用 script-run 判定;无命中退化为句子级 | 按自定义分段符做段内抑制 |
+
+约束(与当前代码一致):
+
+- **抑制只在 `both` 生效**:`english_only`/`chinese_only` 保持严格过滤,不叠加夹杂抑制。
+- **只作用 sanitize 后的纯文本**:管线 `sanitizeForSpeech` 先于 `planBilingualSpeech`,
+  空行已被压缩、Markdown 结构已剥除,策略 4 的分段符只能是用户自定义可见字符组合,
+  不含空行/换行/Markdown 符号(换行不是句界,既有已测决策)。
+
 2. **过滤(`bilingual`)**:
    - `both` — 全读
    - `english_only` — 只读纯英文句

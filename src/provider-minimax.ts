@@ -46,6 +46,9 @@ function resolveConfig(config: Record<string, unknown>): MinimaxConfig {
     bitrate: typeof config.bitrate === 'number' ? config.bitrate : 128000,
     channel: config.channel === 2 ? 2 : 1,
     bilingual: 'both',
+    segment_strategy: 'sentence',
+    segment_threshold: 5,
+    segment_separators: '',
     voices: {},
     voice_profiles: {},
   }

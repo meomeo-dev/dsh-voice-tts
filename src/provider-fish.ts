@@ -76,6 +76,9 @@ function resolveConfig(config: Record<string, unknown>): FishConfig {
     condition_on_previous_chunks: booleanOf(config.condition_on_previous_chunks, true),
     early_stop_threshold: numberOf(config.early_stop_threshold, 1),
     bilingual: 'both',
+    segment_strategy: 'sentence',
+    segment_threshold: 5,
+    segment_separators: '',
     voices: {},
     voice_profiles: {},
   }

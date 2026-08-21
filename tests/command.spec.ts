@@ -222,7 +222,7 @@ describe('renderConfigTemplate', () => {
     const parsed = JSON.parse(template) as { provider: string; config: Record<string, unknown>; credentials: { apiKeyRef: string } }
     expect(parsed.provider).toBe('volcengine')
     expect(Object.keys(parsed.config)).toEqual([
-      'voice_type', 'resource_id', 'model', 'format', 'play_format', 'sample_rate', 'speech_rate', 'loudness_rate', 'pitch', 'bilingual', 'voices', 'voice_profiles',
+      'voice_type', 'resource_id', 'model', 'format', 'play_format', 'sample_rate', 'speech_rate', 'loudness_rate', 'pitch', 'bilingual', 'segment_strategy', 'segment_threshold', 'segment_separators', 'voices', 'voice_profiles',
     ])
     expect(parsed.credentials.apiKeyRef).toBe('VOLCENGINE_TTS_API_KEY')
   })

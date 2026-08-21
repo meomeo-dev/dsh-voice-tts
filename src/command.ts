@@ -181,6 +181,10 @@ export function renderStatus(settings: VoiceTtsSettings, providerIds: readonly s
       lines.push(`  voice_type: ${c.voice_type}`)
     }
     lines.push(`  bilingual:  ${c.bilingual}`)
+    const segment = c.segment_strategy === 'script-run' || c.segment_strategy === 'custom-separator'
+      ? `${c.segment_strategy} (≤${c.segment_threshold})`
+      : c.segment_strategy
+    lines.push(`  segment:    ${segment}${c.segment_strategy === 'custom-separator' && c.segment_separators !== '' ? ` sep="${c.segment_separators}"` : ''}`)
     lines.push(`  voices:     zh=${zh}  en=${en}  mixed=${mixed}`)
   }
   return lines.join('\n')

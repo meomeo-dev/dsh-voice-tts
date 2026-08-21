@@ -41,6 +41,9 @@ function resolveConfig(config: Record<string, unknown>): OpenaiConfig {
     play_format: formatOf(config.play_format, 'mp3'),
     speed: typeof config.speed === 'number' ? config.speed : 1,
     bilingual: 'both',
+    segment_strategy: 'sentence',
+    segment_threshold: 5,
+    segment_separators: '',
     voices: {},
     voice_profiles: {},
   }

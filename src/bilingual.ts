@@ -43,6 +43,104 @@ export interface BilingualPlan {
 const CJK_RE = /[一-鿿]/
 const LATIN_RE = /[A-Za-z]/
 
+/** 一个连续同脚本区段(空白与标点跳过但不打断区段,归入前一个区段的文本)。 */
+export interface ScriptRun {
+  /** 区段文本(含跳过但未打断的空白/标点)。 */
+  readonly text: string
+  /** 区段脚本类别:`zh` CJK / `en` Latin。 */
+  readonly script: 'zh' | 'en'
+  /** 区段内的脚本字符数(空白/标点不计)。 */
+  readonly scriptChars: number
+  /** 区段在原文中的起止 UTF-16 偏移(含跳过字符)。 */
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * 扫描连续同脚本区段:复用 `classifySentence` 的 `[一-鿿]`/`[A-Za-z]` 字符集,
+ * 空白与标点跳过但不打断区段。区段是“夹杂判定”的输入,不拆散 mixed 句。
+ * @param text - 待扫描文本。
+ * @returns 按序的脚本区段数组。
+ */
+export function scriptRuns(text: string): ScriptRun[] {
+  const runs: ScriptRun[] = []
+  let current: { text: string; script: 'zh' | 'en'; scriptChars: number; start: number; end: number } | null = null
+  let position = 0
+  for (const ch of text) {
+    const width = ch.length
+    if (CJK_RE.test(ch)) {
+      if (current === null || current.script !== 'zh') {
+        current = { text: '', script: 'zh', scriptChars: 0, start: position, end: position }
+        runs.push(current)
+      }
+      current.text += ch
+      current.scriptChars++
+    } else if (LATIN_RE.test(ch)) {
+      if (current === null || current.script !== 'en') {
+        current = { text: '', script: 'en', scriptChars: 0, start: position, end: position }
+        runs.push(current)
+      }
+      current.text += ch
+      current.scriptChars++
+    } else if (current !== null) {
+      current.text += ch
+    }
+    if (current !== null) current.end = position + width
+    position += width
+  }
+  return runs.map(run => ({ ...run }))
+}
+
+/** 判定区段是否夹杂:脚本字符数 ≤ 阈值,且左右都被异语言区段夹持。 */
+function isSuppressedRun(runs: readonly ScriptRun[], index: number, threshold: number): boolean {
+  const run = runs[index]
+  if (run === undefined || run.scriptChars > threshold) return false
+  const prev = runs[index - 1]
+  const next = runs[index + 1]
+  return prev !== undefined && next !== undefined
+    && prev.script !== run.script && next.script !== run.script
+}
+
+/**
+ * 挖掉被抑制的夹杂区段(策略 3「script-run」):区段脚本字符数 ≤ 阈值且被异语言
+ * 区段夹持 → 从文本中移除,剩余文本再走句子级管线。
+ * @param text - 待处理文本。
+ * @param threshold - 夹杂区段长度阈值。
+ * @returns 移除夹杂区段后的文本(无夹杂时原样返回)。
+ */
+export function suppressSegments(text: string, threshold: number): string {
+  const runs = scriptRuns(text)
+  const suppressed = new Set<ScriptRun>(runs.filter((_, i) => isSuppressedRun(runs, i, threshold)))
+  if (suppressed.size === 0) return text
+  const parts: string[] = []
+  let cursor = 0
+  for (const run of runs) {
+    if (suppressed.has(run)) {
+      cursor = run.end
+      continue
+    }
+    if (run.start > cursor) parts.push(text.slice(cursor, run.start))
+    parts.push(run.text)
+    cursor = run.end
+  }
+  if (cursor < text.length) parts.push(text.slice(cursor))
+  return parts.join('')
+}
+
+/**
+ * 按自定义分段符切窗口,窗口内独立做夹杂抑制(策略 4「custom-separator」):
+ * 窗口边界即文本边界——窗口内首/末区段不判夹持。分段符无命中时原样返回
+ * (退化为句子级切分,不引入额外窗口)。
+ * @param text - 待处理文本。
+ * @param separators - 自定义分段符(任一命中即切窗口;空串 = 无命中)。
+ * @param threshold - 夹杂区段长度阈值(复用策略 3 的判定)。
+ * @returns 各窗口抑制后的文本(保留分段符)。
+ */
+export function suppressBySeparators(text: string, separators: string, threshold: number): string {
+  if (separators === '' || !text.includes(separators)) return text
+  return text.split(separators).map(part => suppressSegments(part, threshold)).join(separators)
+}
+
 /** 把文本切成句子(sentence-splitter,中英双语句界)。 */
 export function segmentSentences(text: string): string[] {
   return splitSentences(text)
@@ -149,14 +247,45 @@ export function effectiveVoices(config: BilingualVoiceConfig, voiceId: string | 
   return config.voices
 }
 
-/** 规划双语播报:过滤后按语言分配音色,相邻同音色且同参数的句子合并为一个分片。 */
+/**
+ * 规划双语播报:按 `segment_strategy` 切分/抑制后,过滤并按语言分配音色,
+ * 相邻同音色且同参数的句子合并为一个分片。
+ * - `off`:整段单一 VoiceRun,不做语言判定与抑制(忽略 bilingual 过滤)。
+ * - `script-run` / `custom-separator`:夹杂抑制只在 `both` 生效,语言限定模式
+ *   保持现状严格过滤。
+ */
 export function planBilingualSpeech(
   text: string,
   config: BilingualVoiceConfig,
   voiceId?: string,
 ): BilingualPlan {
   const voices = effectiveVoices(config, voiceId)
-  const sentences = analyzeBilingual(text)
+  if (config.segment_strategy === 'off') {
+    const lang = classifySentence(text)
+    const byLang: Record<SentenceLang, number> = { zh: 0, en: 0, mixed: 0 }
+    byLang[lang] = 1
+    return {
+      runs: [{
+        voice: voiceForVoices('zh', voices, config.voice_type),
+        lang,
+        text,
+        count: 1,
+        params: slotParams(voices.zh),
+      }],
+      total: 1,
+      spoken: 1,
+      byLang,
+    }
+  }
+  let speechText = text
+  if (config.bilingual === 'both') {
+    if (config.segment_strategy === 'script-run') {
+      speechText = suppressSegments(text, config.segment_threshold)
+    } else if (config.segment_strategy === 'custom-separator') {
+      speechText = suppressBySeparators(text, config.segment_separators, config.segment_threshold)
+    }
+  }
+  const sentences = analyzeBilingual(speechText)
   const selected = filterSentences(sentences, config.bilingual)
   const runs: VoiceRun[] = []
   const byLang: Record<SentenceLang, number> = { zh: 0, en: 0, mixed: 0 }

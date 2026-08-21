@@ -101,6 +101,17 @@ function voiceProfilesSchema(params: readonly TunableParam[]) {
 
 const BILINGUAL_SCHEMA = z.union(['both', 'english_only', 'chinese_only'] as const).default('both')
 
+const SEGMENT_STRATEGY_SCHEMA = z.union(['off', 'sentence', 'script-run', 'custom-separator'] as const).default('sentence')
+
+/** 切分策略三字段(逐 provider 挂载,与 bilingual 同构;见 docs/segment-strategy-design.md)。 */
+function segmentSchema() {
+  return {
+    segment_strategy: SEGMENT_STRATEGY_SCHEMA,
+    segment_threshold: z.number().step(1).min(1).max(100).default(5),
+    segment_separators: z.string().default(''),
+  }
+}
+
 /** 一个 vendor 的 schema(密钥只存引用名,真值在 credentials)。 */
 const VENDOR_SCHEMA = z.object({
   label: z.string(),
@@ -146,6 +157,7 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       loudness_rate: z.number().step(1).min(-50).max(100).default(0),
       pitch: z.number().step(1).min(-12).max(12).default(0),
       bilingual: BILINGUAL_SCHEMA,
+      ...segmentSchema(),
       voices: voicesSchema(VOLCENGINE_TUNABLE_PARAMS),
       voice_profiles: voiceProfilesSchema(VOLCENGINE_TUNABLE_PARAMS),
     }),
@@ -159,6 +171,7 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       speed: z.number().step(0.01).min(0.25).max(4).default(1),
       gain: z.number().step(0.1).min(-10).max(10).default(0),
       bilingual: BILINGUAL_SCHEMA,
+      ...segmentSchema(),
       voices: voicesSchema(SILICONFLOW_TUNABLE_PARAMS),
       voice_profiles: voiceProfilesSchema(SILICONFLOW_TUNABLE_PARAMS),
     }),
@@ -167,6 +180,7 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       voice_type: z.string().default(''),
       rate: z.number().step(1).min(1).max(600).default(DEFAULT_HOST_RATE),
       bilingual: BILINGUAL_SCHEMA,
+      ...segmentSchema(),
       voices: voicesSchema([]),
       voice_profiles: voiceProfilesSchema([]),
     }),
@@ -179,6 +193,7 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       play_format: z.union(['mp3', 'opus', 'aac', 'flac'] as const).default('mp3'),
       speed: z.number().step(0.05).min(0.25).max(4).default(1),
       bilingual: BILINGUAL_SCHEMA,
+      ...segmentSchema(),
       voices: voicesSchema(OPENAI_TUNABLE_PARAMS),
       voice_profiles: voiceProfilesSchema(OPENAI_TUNABLE_PARAMS),
     }),
@@ -196,6 +211,7 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       bitrate: z.number().step(1).min(32000).max(256000).default(128000),
       channel: z.union([1, 2] as const).default(1),
       bilingual: BILINGUAL_SCHEMA,
+      ...segmentSchema(),
       voices: voicesSchema(MINIMAX_TUNABLE_PARAMS),
       voice_profiles: voiceProfilesSchema(MINIMAX_TUNABLE_PARAMS),
     }),
@@ -222,6 +238,7 @@ const SCHEMA: z<VoiceTtsSettings> = z.object({
       condition_on_previous_chunks: z.boolean().default(true),
       early_stop_threshold: z.number().step(0.05).min(0).max(1).default(1),
       bilingual: BILINGUAL_SCHEMA,
+      ...segmentSchema(),
       voices: voicesSchema(FISH_TUNABLE_PARAMS),
       voice_profiles: voiceProfilesSchema(FISH_TUNABLE_PARAMS),
     }),
@@ -248,6 +265,9 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       loudness_rate: 0,
       pitch: 0,
       bilingual: 'both',
+      segment_strategy: 'sentence',
+      segment_threshold: 5,
+      segment_separators: '',
       voices: {},
       voice_profiles: {},
     },
@@ -261,6 +281,9 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       speed: 1,
       gain: 0,
       bilingual: 'both',
+      segment_strategy: 'sentence',
+      segment_threshold: 5,
+      segment_separators: '',
       voices: {},
       voice_profiles: {},
     },
@@ -269,6 +292,9 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       voice_type: '',
       rate: DEFAULT_HOST_RATE,
       bilingual: 'both',
+      segment_strategy: 'sentence',
+      segment_threshold: 5,
+      segment_separators: '',
       voices: {},
       voice_profiles: {},
     },
@@ -281,6 +307,9 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       play_format: 'mp3',
       speed: 1,
       bilingual: 'both',
+      segment_strategy: 'sentence',
+      segment_threshold: 5,
+      segment_separators: '',
       voices: {},
       voice_profiles: {},
     },
@@ -298,6 +327,9 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       bitrate: 128000,
       channel: 1,
       bilingual: 'both',
+      segment_strategy: 'sentence',
+      segment_threshold: 5,
+      segment_separators: '',
       voices: {},
       voice_profiles: {},
     },
@@ -324,6 +356,9 @@ const DEFAULT_SETTINGS: VoiceTtsSettings = {
       condition_on_previous_chunks: true,
       early_stop_threshold: 1,
       bilingual: 'both',
+      segment_strategy: 'sentence',
+      segment_threshold: 5,
+      segment_separators: '',
       voices: {},
       voice_profiles: {},
     },
@@ -374,27 +409,27 @@ function deliveryView(settings: VoiceTtsSettings): DeliveryView {
   const provider = settings.provider
   if (provider === 'volcengine') {
     const v = settings.providers.volcengine
-    return { bilingual: v.bilingual, voice_type: v.voice_type, voices: v.voices, voice_profiles: v.voice_profiles, format: v.format, play_format: v.play_format }
+    return { bilingual: v.bilingual, segment_strategy: v.segment_strategy, segment_threshold: v.segment_threshold, segment_separators: v.segment_separators, voice_type: v.voice_type, voices: v.voices, voice_profiles: v.voice_profiles, format: v.format, play_format: v.play_format }
   }
   if (provider === 'siliconflow-cn') {
     const s = settings.providers['siliconflow-cn']
-    return { bilingual: s.bilingual, voice_type: s.voice_type, voices: s.voices, voice_profiles: s.voice_profiles, format: s.format, play_format: s.play_format }
+    return { bilingual: s.bilingual, segment_strategy: s.segment_strategy, segment_threshold: s.segment_threshold, segment_separators: s.segment_separators, voice_type: s.voice_type, voices: s.voices, voice_profiles: s.voice_profiles, format: s.format, play_format: s.play_format }
   }
   if (provider === 'openai') {
     const o = settings.providers.openai
-    return { bilingual: o.bilingual, voice_type: o.voice_type, voices: o.voices, voice_profiles: o.voice_profiles, format: o.format, play_format: o.play_format }
+    return { bilingual: o.bilingual, segment_strategy: o.segment_strategy, segment_threshold: o.segment_threshold, segment_separators: o.segment_separators, voice_type: o.voice_type, voices: o.voices, voice_profiles: o.voice_profiles, format: o.format, play_format: o.play_format }
   }
   if (provider === 'minimax') {
     const m = settings.providers.minimax
-    return { bilingual: m.bilingual, voice_type: m.voice_type, voices: m.voices, voice_profiles: m.voice_profiles, format: m.format, play_format: m.play_format }
+    return { bilingual: m.bilingual, segment_strategy: m.segment_strategy, segment_threshold: m.segment_threshold, segment_separators: m.segment_separators, voice_type: m.voice_type, voices: m.voices, voice_profiles: m.voice_profiles, format: m.format, play_format: m.play_format }
   }
   if (provider === 'fish-audio') {
     const f = settings.providers['fish-audio']
-    return { bilingual: f.bilingual, voice_type: f.voice_type, voices: f.voices, voice_profiles: f.voice_profiles, format: f.format, play_format: f.play_format }
+    return { bilingual: f.bilingual, segment_strategy: f.segment_strategy, segment_threshold: f.segment_threshold, segment_separators: f.segment_separators, voice_type: f.voice_type, voices: f.voices, voice_profiles: f.voice_profiles, format: f.format, play_format: f.play_format }
   }
   if (provider === 'host') {
     const h = settings.providers.host
-    return { bilingual: h.bilingual, voice_type: h.voice_type, voices: h.voices, voice_profiles: h.voice_profiles, format: HOST_OUTPUT_FORMAT, play_format: HOST_OUTPUT_FORMAT }
+    return { bilingual: h.bilingual, segment_strategy: h.segment_strategy, segment_threshold: h.segment_threshold, segment_separators: h.segment_separators, voice_type: h.voice_type, voices: h.voices, voice_profiles: h.voice_profiles, format: HOST_OUTPUT_FORMAT, play_format: HOST_OUTPUT_FORMAT }
   }
   throw new Error(`unknown TTS provider "${provider}"`)
 }

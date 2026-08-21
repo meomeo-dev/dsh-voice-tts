@@ -55,6 +55,9 @@ export interface Voices {
 export interface BilingualFields {
   voice_type: string
   bilingual: 'both' | 'english_only' | 'chinese_only'
+  segment_strategy: 'off' | 'sentence' | 'script-run' | 'custom-separator'
+  segment_threshold: number
+  segment_separators: string
   voices: Voices
   voice_profiles: Record<string, Voices>
 }
